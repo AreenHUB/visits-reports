@@ -16,7 +16,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbFileName = 'alaqsa_visits.db';
-  static const _schemaVersion = 2;
+  static const _schemaVersion = 3;
 
   Database? _db;
 
@@ -165,6 +165,9 @@ class AppDatabase {
 
     batch.execute(_cashEntriesTableSql);
     batch.execute(_dayNotesTableSql);
+    batch.execute(_employeesTableSql);
+    batch.execute(_salaryPaymentsTableSql);
+    batch.execute(_debtsTableSql);
 
     batch.execute('CREATE INDEX idx_visits_date ON visits (date)');
     batch.execute('CREATE INDEX idx_visits_customer ON visits (customer_id)');
@@ -177,6 +180,9 @@ class AppDatabase {
     batch.execute('CREATE INDEX idx_payments_credit ON payments (credit_id)');
     batch.execute('CREATE INDEX idx_cash_date ON cash_entries (date)');
     batch.execute('CREATE INDEX idx_cash_direction ON cash_entries (direction)');
+    batch.execute('CREATE INDEX idx_salary_employee ON salary_payments (employee_id)');
+    batch.execute('CREATE INDEX idx_salary_date ON salary_payments (date)');
+    batch.execute('CREATE INDEX idx_debts_date ON debts (date)');
 
     await batch.commit(noResult: true);
   }
@@ -215,6 +221,57 @@ class AppDatabase {
     )
   ''';
 
+
+  /// جدول الموظفين
+  static const _employeesTableSql = '''
+    CREATE TABLE IF NOT EXISTS employees (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT DEFAULT '',
+      role TEXT DEFAULT '',
+      monthly_salary REAL DEFAULT 0,
+      notes TEXT DEFAULT '',
+      active INTEGER DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  ''';
+
+  /// دفعات الرواتب المسلّمة للموظفين
+  static const _salaryPaymentsTableSql = '''
+    CREATE TABLE IF NOT EXISTS salary_payments (
+      id TEXT PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      employee_name TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      kind TEXT DEFAULT 'partial',
+      method TEXT DEFAULT 'cash',
+      date INTEGER NOT NULL,
+      for_month INTEGER,
+      notes TEXT DEFAULT '',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (employee_id) REFERENCES employees (id) ON DELETE CASCADE
+    )
+  ''';
+
+  /// ديون العملاء — للتذكير بمن عليه دين
+  static const _debtsTableSql = '''
+    CREATE TABLE IF NOT EXISTS debts (
+      id TEXT PRIMARY KEY,
+      person_name TEXT NOT NULL,
+      person_phone TEXT DEFAULT '',
+      person_address TEXT DEFAULT '',
+      amount REAL NOT NULL DEFAULT 0,
+      paid REAL NOT NULL DEFAULT 0,
+      reason TEXT DEFAULT '',
+      date INTEGER NOT NULL,
+      due_date INTEGER,
+      notes TEXT DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  ''';
+
   Future<void> _migrate(Database db, int from, int to) async {
     // الترقية إلى الإصدار 2: الحركات المالية وملاحظات اليوم
     if (from < 2) {
@@ -223,6 +280,18 @@ class AppDatabase {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_cash_date ON cash_entries (date)');
       await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_cash_direction ON cash_entries (direction)');
+    }
+
+    // الترقية إلى الإصدار 3: الرواتب وديون العملاء
+    if (from < 3) {
+      await db.execute(_employeesTableSql);
+      await db.execute(_salaryPaymentsTableSql);
+      await db.execute(_debtsTableSql);
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_salary_employee ON salary_payments (employee_id)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_salary_date ON salary_payments (date)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_debts_date ON debts (date)');
     }
   }
 

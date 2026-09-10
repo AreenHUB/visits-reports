@@ -659,3 +659,375 @@ class CashTotals {
     return CashTotals(income: inc, expense: exp);
   }
 }
+
+// ---------------------------------------------------------------------------
+// رواتب الموظفين
+// ---------------------------------------------------------------------------
+
+/// موظف: له مكان خاص تُسجَّل فيه رواتبه ودفعاته
+class Employee {
+  final String id;
+  String name;
+  String phone;
+  String role;
+
+  /// الراتب الشهري المتّفق عليه، اختياري — للمقارنة مع المدفوع
+  double monthlySalary;
+
+  String notes;
+  bool active;
+  final DateTime createdAt;
+  DateTime updatedAt;
+
+  Employee({
+    required this.id,
+    required this.name,
+    this.phone = '',
+    this.role = '',
+    this.monthlySalary = 0,
+    this.notes = '',
+    this.active = true,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'name': name,
+        'phone': phone,
+        'role': role,
+        'monthly_salary': monthlySalary,
+        'notes': notes,
+        'active': active ? 1 : 0,
+        'created_at': createdAt.millisecondsSinceEpoch,
+        'updated_at': updatedAt.millisecondsSinceEpoch,
+      };
+
+  factory Employee.fromMap(Map<String, Object?> m) => Employee(
+        id: m['id'] as String,
+        name: (m['name'] as String?) ?? '',
+        phone: (m['phone'] as String?) ?? '',
+        role: (m['role'] as String?) ?? '',
+        monthlySalary: ((m['monthly_salary'] as num?) ?? 0).toDouble(),
+        notes: (m['notes'] as String?) ?? '',
+        active: ((m['active'] as int?) ?? 1) == 1,
+        createdAt: DateTime.fromMillisecondsSinceEpoch((m['created_at'] as int?) ?? 0),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updated_at'] as int?) ?? 0),
+      );
+
+  Employee copyWith({
+    String? name,
+    String? phone,
+    String? role,
+    double? monthlySalary,
+    String? notes,
+    bool? active,
+  }) =>
+      Employee(
+        id: id,
+        name: name ?? this.name,
+        phone: phone ?? this.phone,
+        role: role ?? this.role,
+        monthlySalary: monthlySalary ?? this.monthlySalary,
+        notes: notes ?? this.notes,
+        active: active ?? this.active,
+        createdAt: createdAt,
+        updatedAt: DateTime.now(),
+      );
+}
+
+/// نوع دفعة الراتب: كامل أم جزء منه
+enum SalaryKind { full, partial, advance, bonus }
+
+extension SalaryKindX on SalaryKind {
+  String get label => switch (this) {
+        SalaryKind.full => 'راتب كامل',
+        SalaryKind.partial => 'دفعة من الراتب',
+        SalaryKind.advance => 'سلفة',
+        SalaryKind.bonus => 'مكافأة',
+      };
+
+  static SalaryKind fromCode(String? c) =>
+      SalaryKind.values.firstWhere((e) => e.name == c, orElse: () => SalaryKind.partial);
+}
+
+/// دفعة راتب مسلّمة لموظف بتاريخها
+class SalaryPayment {
+  final String id;
+  String employeeId;
+
+  /// نسخة من اسم الموظف وقت الدفع، ليبقى التقرير صحيحًا
+  String employeeName;
+
+  double amount;
+  SalaryKind kind;
+  PayMethod method;
+  DateTime date;
+
+  /// الشهر الذي تخصّه الدفعة (بداية الشهر)، اختياري
+  DateTime? forMonth;
+
+  String notes;
+  final DateTime createdAt;
+
+  SalaryPayment({
+    required this.id,
+    required this.employeeId,
+    required this.employeeName,
+    this.amount = 0,
+    this.kind = SalaryKind.partial,
+    this.method = PayMethod.cash,
+    required this.date,
+    this.forMonth,
+    this.notes = '',
+    required this.createdAt,
+  });
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'employee_id': employeeId,
+        'employee_name': employeeName,
+        'amount': amount,
+        'kind': kind.name,
+        'method': method.name,
+        'date': date.millisecondsSinceEpoch,
+        'for_month': forMonth?.millisecondsSinceEpoch,
+        'notes': notes,
+        'created_at': createdAt.millisecondsSinceEpoch,
+      };
+
+  factory SalaryPayment.fromMap(Map<String, Object?> m) => SalaryPayment(
+        id: m['id'] as String,
+        employeeId: (m['employee_id'] as String?) ?? '',
+        employeeName: (m['employee_name'] as String?) ?? '',
+        amount: ((m['amount'] as num?) ?? 0).toDouble(),
+        kind: SalaryKindX.fromCode(m['kind'] as String?),
+        method: PayMethodX.fromCode(m['method'] as String?),
+        date: DateTime.fromMillisecondsSinceEpoch((m['date'] as int?) ?? 0),
+        forMonth: m['for_month'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(m['for_month'] as int),
+        notes: (m['notes'] as String?) ?? '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch((m['created_at'] as int?) ?? 0),
+      );
+
+  SalaryPayment copyWith({
+    double? amount,
+    SalaryKind? kind,
+    PayMethod? method,
+    DateTime? date,
+    DateTime? forMonth,
+    bool clearForMonth = false,
+    String? notes,
+  }) =>
+      SalaryPayment(
+        id: id,
+        employeeId: employeeId,
+        employeeName: employeeName,
+        amount: amount ?? this.amount,
+        kind: kind ?? this.kind,
+        method: method ?? this.method,
+        date: date ?? this.date,
+        forMonth: clearForMonth ? null : (forMonth ?? this.forMonth),
+        notes: notes ?? this.notes,
+        createdAt: createdAt,
+      );
+}
+
+/// موظف مع دفعاته
+class EmployeeFull {
+  final Employee employee;
+  final List<SalaryPayment> payments;
+
+  const EmployeeFull({required this.employee, this.payments = const []});
+
+  double get totalPaid => payments.fold(0.0, (s, p) => s + p.amount);
+
+  /// المدفوع ضمن شهر معيّن
+  double paidInMonth(DateTime month) => payments
+      .where((p) => p.date.year == month.year && p.date.month == month.month)
+      .fold(0.0, (s, p) => s + p.amount);
+
+  SalaryPayment? get lastPayment {
+    if (payments.isEmpty) return null;
+    final sorted = [...payments]..sort((a, b) => b.date.compareTo(a.date));
+    return sorted.first;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ديون العملاء — تذكير بمن عليه دين
+// ---------------------------------------------------------------------------
+
+/// دين على عميل: يُسجَّل للتذكير ويُحذف عند السداد
+class DebtRecord {
+  final String id;
+  String personName;
+  String personPhone;
+  String personAddress;
+
+  /// المبلغ الأصلي للدين
+  double amount;
+
+  /// ما سُدِّد منه حتى الآن
+  double paid;
+
+  String reason;
+  DateTime date;
+  DateTime? dueDate;
+  String notes;
+  final DateTime createdAt;
+  DateTime updatedAt;
+
+  DebtRecord({
+    required this.id,
+    required this.personName,
+    this.personPhone = '',
+    this.personAddress = '',
+    this.amount = 0,
+    this.paid = 0,
+    this.reason = '',
+    required this.date,
+    this.dueDate,
+    this.notes = '',
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  double get remaining => amount - paid;
+
+  bool get isPaidOff => remaining <= 0.009;
+
+  bool get isOverdue =>
+      !isPaidOff && dueDate != null && dueDate!.isBefore(DateTime.now());
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'person_name': personName,
+        'person_phone': personPhone,
+        'person_address': personAddress,
+        'amount': amount,
+        'paid': paid,
+        'reason': reason,
+        'date': date.millisecondsSinceEpoch,
+        'due_date': dueDate?.millisecondsSinceEpoch,
+        'notes': notes,
+        'created_at': createdAt.millisecondsSinceEpoch,
+        'updated_at': updatedAt.millisecondsSinceEpoch,
+      };
+
+  factory DebtRecord.fromMap(Map<String, Object?> m) => DebtRecord(
+        id: m['id'] as String,
+        personName: (m['person_name'] as String?) ?? '',
+        personPhone: (m['person_phone'] as String?) ?? '',
+        personAddress: (m['person_address'] as String?) ?? '',
+        amount: ((m['amount'] as num?) ?? 0).toDouble(),
+        paid: ((m['paid'] as num?) ?? 0).toDouble(),
+        reason: (m['reason'] as String?) ?? '',
+        date: DateTime.fromMillisecondsSinceEpoch((m['date'] as int?) ?? 0),
+        dueDate: m['due_date'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(m['due_date'] as int),
+        notes: (m['notes'] as String?) ?? '',
+        createdAt: DateTime.fromMillisecondsSinceEpoch((m['created_at'] as int?) ?? 0),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updated_at'] as int?) ?? 0),
+      );
+
+  DebtRecord copyWith({
+    String? personName,
+    String? personPhone,
+    String? personAddress,
+    double? amount,
+    double? paid,
+    String? reason,
+    DateTime? date,
+    DateTime? dueDate,
+    bool clearDueDate = false,
+    String? notes,
+  }) =>
+      DebtRecord(
+        id: id,
+        personName: personName ?? this.personName,
+        personPhone: personPhone ?? this.personPhone,
+        personAddress: personAddress ?? this.personAddress,
+        amount: amount ?? this.amount,
+        paid: paid ?? this.paid,
+        reason: reason ?? this.reason,
+        date: date ?? this.date,
+        dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
+        notes: notes ?? this.notes,
+        createdAt: createdAt,
+        updatedAt: DateTime.now(),
+      );
+}
+
+// ---------------------------------------------------------------------------
+// إعدادات تضمين الأقسام في التقرير
+// ---------------------------------------------------------------------------
+
+/// ما الذي يُدرَج في ملف التقرير — يتحكّم به المستخدم قبل التصدير
+class ReportOptions {
+  final bool includeVisits;
+  final bool includeCredits;
+  final bool includeCash;
+
+  /// رصيد الكاش داخل المحل (نقدًا فقط)
+  final bool includeCashBalance;
+
+  final bool includeSalaries;
+  final bool includeDebts;
+
+  const ReportOptions({
+    this.includeVisits = true,
+    this.includeCredits = true,
+    this.includeCash = true,
+    this.includeCashBalance = true,
+    this.includeSalaries = false,
+    this.includeDebts = false,
+  });
+
+  static const _prefix = 'report_opt_';
+
+  factory ReportOptions.fromMap(Map<String, String> m) {
+    bool v(String key, bool fallback) {
+      final raw = m['$_prefix$key'];
+      if (raw == null || raw.isEmpty) return fallback;
+      return raw == '1' || raw == 'true';
+    }
+
+    return ReportOptions(
+      includeVisits: v('visits', true),
+      includeCredits: v('credits', true),
+      includeCash: v('cash', true),
+      includeCashBalance: v('cash_balance', true),
+      includeSalaries: v('salaries', false),
+      includeDebts: v('debts', false),
+    );
+  }
+
+  Map<String, String> toMap() => {
+        '${_prefix}visits': includeVisits ? '1' : '0',
+        '${_prefix}credits': includeCredits ? '1' : '0',
+        '${_prefix}cash': includeCash ? '1' : '0',
+        '${_prefix}cash_balance': includeCashBalance ? '1' : '0',
+        '${_prefix}salaries': includeSalaries ? '1' : '0',
+        '${_prefix}debts': includeDebts ? '1' : '0',
+      };
+
+  ReportOptions copyWith({
+    bool? includeVisits,
+    bool? includeCredits,
+    bool? includeCash,
+    bool? includeCashBalance,
+    bool? includeSalaries,
+    bool? includeDebts,
+  }) =>
+      ReportOptions(
+        includeVisits: includeVisits ?? this.includeVisits,
+        includeCredits: includeCredits ?? this.includeCredits,
+        includeCash: includeCash ?? this.includeCash,
+        includeCashBalance: includeCashBalance ?? this.includeCashBalance,
+        includeSalaries: includeSalaries ?? this.includeSalaries,
+        includeDebts: includeDebts ?? this.includeDebts,
+      );
+}

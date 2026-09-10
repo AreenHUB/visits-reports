@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:printing/printing.dart';
 
 import '../db/repository.dart';
+import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/excel_service.dart';
 import '../services/pdf_service.dart';
@@ -191,8 +192,12 @@ class _ReportBodyState extends ConsumerState<_ReportBody> {
 
   Future<File> _buildPdfFile() async {
     final settings = await ref.read(settingsProvider.future);
-    final bytes = await PdfService.instance
-        .buildReport(summary: widget.summary, settings: settings);
+    final options = await ref.read(reportOptionsProvider.future);
+    final bytes = await PdfService.instance.buildReport(
+      summary: widget.summary,
+      settings: settings,
+      options: options,
+    );
     return PdfService.instance.saveToFile(bytes, PdfService.fileNameFor(widget.summary));
   }
 
@@ -210,13 +215,37 @@ class _ReportBodyState extends ConsumerState<_ReportBody> {
 
   Future<void> _previewPdf() => _run(() async {
         final settings = await ref.read(settingsProvider.future);
-        final bytes = await PdfService.instance
-            .buildReport(summary: widget.summary, settings: settings);
-        if (!mounted) return;
-        await Printing.layoutPdf(
-          onLayout: (_) async => bytes,
-          name: PdfService.fileNameFor(widget.summary),
+        final options = await ref.read(reportOptionsProvider.future);
+        final bytes = await PdfService.instance.buildReport(
+          summary: widget.summary,
+          settings: settings,
+          options: options,
         );
+        if (!mounted) return;
+
+        try {
+          await Printing.layoutPdf(
+            onLayout: (_) async => bytes,
+            // اسم لاتيني: إطار الطباعة في أندرويد لا يقبل كل الأحرف
+            name: PdfService.printJobName(widget.summary),
+            // الملف مُولَّد مسبقًا بمقاس A4، فلا داعي لإعادة تخطيطه
+            // لكل مقاس ورق — وهذا ما كان يُسقط المعاينة في التقارير الطويلة.
+            dynamicLayout: false,
+          );
+        } catch (e) {
+          // إن تعذّرت المعاينة (لا خدمة طباعة على الجهاز مثلًا) نحفظ الملف
+          // ونعرضه للمشاركة بدل أن يتوقف التطبيق.
+          if (!mounted) return;
+          final file = await PdfService.instance
+              .saveToFile(bytes, PdfService.fileNameFor(widget.summary));
+          if (!mounted) return;
+          showSnack(context, 'تعذّرت المعاينة على هذا الجهاز، تم تجهيز الملف للمشاركة');
+          await ShareService.instance.shareFile(
+            file,
+            subject: 'تقرير الزيارات',
+            origin: ShareService.originFrom(context),
+          );
+        }
       });
 
   Future<void> _shareExcel() => _run(() async {
@@ -263,6 +292,8 @@ class _ReportBodyState extends ConsumerState<_ReportBody> {
             icon: const Icon(Icons.visibility_rounded, size: 19),
             label: const Text('معاينة / طباعة التقرير'),
           ),
+          const SizedBox(height: 8),
+          const _ReportOptionsBar(),
 
           const SizedBox(height: 16),
 
@@ -550,4 +581,78 @@ class _MiniPanel extends StatelessWidget {
                   fontSize: 12, fontWeight: FontWeight.w700, color: color)),
         ]),
       );
+}
+
+/// اختيار الأقسام التي تُدرَج في ملف التقرير
+class _ReportOptionsBar extends ConsumerWidget {
+  const _ReportOptionsBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(reportOptionsProvider);
+    final scheme = Theme.of(context).colorScheme;
+
+    return async.when(
+      loading: () => const SizedBox(height: 44),
+      error: (e, _) => const SizedBox.shrink(),
+      data: (o) {
+        Future<void> update(ReportOptions next) async {
+          await Repository.instance.saveReportOptions(next);
+          ref.invalidate(reportOptionsProvider);
+        }
+
+        Widget chip(String label, bool on, ReportOptions Function() toggle) =>
+            FilterChip(
+              label: Text(label, style: const TextStyle(fontSize: 12)),
+              selected: on,
+              onSelected: (_) => update(toggle()),
+              visualDensity: VisualDensity.compact,
+              showCheckmark: true,
+            );
+
+        return Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.tune_rounded, size: 17, color: scheme.primary),
+                const SizedBox(width: 7),
+                Text(
+                  'ما يُدرَج في التقرير',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 9),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                chip('الزيارات', o.includeVisits,
+                    () => o.copyWith(includeVisits: !o.includeVisits)),
+                chip('السحب الآجل', o.includeCredits,
+                    () => o.copyWith(includeCredits: !o.includeCredits)),
+                chip('الحركات المالية', o.includeCash,
+                    () => o.copyWith(includeCash: !o.includeCash)),
+                chip('رصيد الكاش', o.includeCashBalance,
+                    () => o.copyWith(includeCashBalance: !o.includeCashBalance)),
+                chip('الرواتب', o.includeSalaries,
+                    () => o.copyWith(includeSalaries: !o.includeSalaries)),
+                chip('ديون العملاء', o.includeDebts,
+                    () => o.copyWith(includeDebts: !o.includeDebts)),
+              ]),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

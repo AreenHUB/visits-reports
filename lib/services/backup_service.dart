@@ -42,6 +42,9 @@ class BackupService {
         'settings': await dump('settings'),
         'cash_entries': await dump('cash_entries'),
         'day_notes': await dump('day_notes'),
+        'employees': await dump('employees'),
+        'salary_payments': await dump('salary_payments'),
+        'debts': await dump('debts'),
       },
     };
 
@@ -96,6 +99,9 @@ class BackupService {
       'settings',
       'cash_entries',
       'day_notes',
+      'employees',
+      'salary_payments',
+      'debts',
     ];
 
     try {
@@ -129,6 +135,25 @@ class BackupService {
     return RestoreResult(counts: counts);
   }
 
+  /// ملف نقل إلى جهاز آخر.
+  ///
+  /// هو نفسه ملف النسخة الاحتياطية، لكن باسم يوضّح الغرض ومعه بيانات
+  /// تعريفية تساعد المستخدم على التأكد أنه ينقل الملف الصحيح.
+  Future<TransferBundle> createTransferFile() async {
+    final file = await createBackup();
+    final st = await stats();
+
+    final named = File(
+      p.join(
+        file.parent.path,
+        'نقل_بيانات_الأقصى_${Fmt.fileStamp(DateTime.now())}.json',
+      ),
+    );
+    await file.rename(named.path);
+
+    return TransferBundle(file: named, stats: st);
+  }
+
   /// حفظ نسخة في مجلد يختاره المستخدم (التنزيلات مثلًا)
   Future<String?> saveBackupTo(File backup) async {
     final dir = await FilePicker.getDirectoryPath(
@@ -155,6 +180,8 @@ class BackupService {
       payments: await count('payments'),
       serials: await count('serial_memory'),
       cashEntries: await count('cash_entries'),
+      employees: await count('employees'),
+      debts: await count('debts'),
       dbSizeBytes: await dbFile.exists() ? await dbFile.length() : 0,
     );
   }
@@ -164,6 +191,9 @@ class BackupService {
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
       for (final t in [
+        'debts',
+        'salary_payments',
+        'employees',
         'day_notes',
         'cash_entries',
         'payments',
@@ -198,6 +228,8 @@ class RestoreResult {
       '${counts['credits'] ?? 0} سحب آجل',
       '${counts['items'] ?? 0} قطعة',
       if ((counts['cash_entries'] ?? 0) > 0) '${counts['cash_entries']} حركة مالية',
+      if ((counts['employees'] ?? 0) > 0) '${counts['employees']} موظف',
+      if ((counts['debts'] ?? 0) > 0) '${counts['debts']} دين',
     ];
     return 'تمت استعادة ${parts.join(' و')}';
   }
@@ -211,6 +243,8 @@ class BackupStats {
   final int payments;
   final int serials;
   final int cashEntries;
+  final int employees;
+  final int debts;
   final int dbSizeBytes;
 
   const BackupStats({
@@ -221,6 +255,8 @@ class BackupStats {
     this.payments = 0,
     this.serials = 0,
     this.cashEntries = 0,
+    this.employees = 0,
+    this.debts = 0,
     this.dbSizeBytes = 0,
   });
 
@@ -229,4 +265,17 @@ class BackupStats {
     if (dbSizeBytes < 1024 * 1024) return '${(dbSizeBytes / 1024).toStringAsFixed(1)} ك.ب';
     return '${(dbSizeBytes / (1024 * 1024)).toStringAsFixed(1)} م.ب';
   }
+}
+
+/// ملف نقل البيانات إلى جهاز آخر، مع ملخّص ما يحتويه
+class TransferBundle {
+  final File file;
+  final BackupStats stats;
+
+  const TransferBundle({required this.file, required this.stats});
+
+  /// نص مختصر يوصف ما يحتويه الملف
+  String get summary => 'يحتوي ${stats.visits} زيارة و${stats.items} قطعة '
+      'و${stats.cashEntries} حركة مالية و${stats.employees} موظف '
+      'و${stats.debts} دين';
 }

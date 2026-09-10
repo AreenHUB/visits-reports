@@ -7,9 +7,8 @@ import 'db/app_database.dart';
 import 'screens/cash_screen.dart';
 import 'screens/credits_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/more_screen.dart';
 import 'screens/reports_screen.dart';
-import 'screens/search_screen.dart';
-import 'screens/settings_screen.dart';
 import 'utils/theme.dart';
 
 Future<void> main() async {
@@ -66,13 +65,14 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
 
+  // خمسة تبويبات فقط: البحث والإعدادات والرواتب والديون تحت «المزيد»
+  // حتى لا يزدحم الشريط السفلي.
   static const _screens = [
     HomeScreen(),
     CashScreen(),
     CreditsScreen(),
     ReportsScreen(),
-    SearchScreen(),
-    SettingsScreen(),
+    MoreScreen(),
   ];
 
   @override
@@ -104,14 +104,9 @@ class _RootShellState extends State<RootShell> {
             label: 'التقارير',
           ),
           NavigationDestination(
-            icon: Icon(Icons.search_outlined),
-            selectedIcon: Icon(Icons.search_rounded),
-            label: 'بحث',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings_rounded),
-            label: 'الإعدادات',
+            icon: Icon(Icons.grid_view_outlined),
+            selectedIcon: Icon(Icons.grid_view_rounded),
+            label: 'المزيد',
           ),
         ],
       ),

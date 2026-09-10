@@ -44,6 +44,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       });
 
+  /// نقل كل البيانات إلى جهاز آخر لمتابعة العمل عليه
+  Future<void> _transfer() => _run(() async {
+        final origin = ShareService.originFrom(context);
+        final bundle = await BackupService.instance.createTransferFile();
+        if (!mounted) return;
+
+        final proceed = await confirmDialog(
+          context,
+          title: 'نقل البيانات إلى جهاز آخر',
+          message: 'تم تجهيز ملف النقل.\n\n${bundle.summary}\n\n'
+              'أرسله إلى الجهاز الآخر، ثم افتح التطبيق هناك واختر '
+              '«استعادة نسخة احتياطية».\n\n'
+              'الملف يحتوي كل بياناتك ومفتاح التشفير — لا تشاركه مع أحد غيرك.',
+          confirmLabel: 'إرسال الملف',
+        );
+        if (!proceed || !mounted) return;
+
+        await ShareService.instance.shareFile(
+          bundle.file,
+          text: 'ملف نقل بيانات تطبيق الأقصى — ${bundle.summary}',
+          subject: 'نقل بيانات الأقصى',
+          origin: origin,
+        );
+      });
+
   Future<void> _restore() => _run(() async {
         final ok = await confirmDialog(
           context,
@@ -133,6 +158,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               onTap: _busy ? null : _restore,
             ),
 
+            const SectionHeader('نقل إلى جهاز آخر',
+                icon: Icons.phonelink_setup_rounded),
+            _InfoBox(
+              icon: Icons.swap_horiz_rounded,
+              color: AppTheme.accent,
+              text:
+                  'لمتابعة العمل على جوال آخر: أنشئ ملف النقل هنا، أرسله للجهاز '
+                  'الجديد، ثم افتح التطبيق هناك واختر «استعادة نسخة احتياطية». '
+                  'ستنتقل كل البيانات كما هي.',
+            ),
+            const SizedBox(height: 10),
+            _ActionTile(
+              icon: Icons.phonelink_ring_rounded,
+              color: AppTheme.accent,
+              title: 'نقل البيانات إلى جهاز آخر',
+              subtitle: 'ملف واحد يحمل كل شيء لمتابعة العمل',
+              onTap: _busy ? null : _transfer,
+            ),
+
             const SectionHeader('إحصاءات قاعدة البيانات', icon: Icons.storage_rounded),
             const _StatsBox(),
 
@@ -154,7 +198,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       fontWeight: FontWeight.w700,
                       color: Theme.of(context).colorScheme.primary,
                     )),
-                Text('الإصدار 1.2.0',
+                Text('الإصدار 1.3.0',
                     style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.outline)),
@@ -304,6 +348,8 @@ class _StatsBox extends StatelessWidget {
             _statLine('القطع المسجّلة', '${s.items}'),
             _statLine('الدفعات', '${s.payments}'),
             _statLine('الحركات المالية', '${s.cashEntries}'),
+            _statLine('الموظفون', '${s.employees}'),
+            _statLine('ديون العملاء', '${s.debts}'),
             _statLine('الأرقام التسلسلية المحفوظة', '${s.serials}'),
             const Divider(height: 18),
             _statLine('حجم قاعدة البيانات', s.sizeLabel, bold: true),

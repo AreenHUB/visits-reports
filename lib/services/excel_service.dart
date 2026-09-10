@@ -23,6 +23,8 @@ class ExcelService {
     _buildCreditsSheet(excel, s);
     _buildPaymentsSheet(excel, s);
     _buildCashSheet(excel, s);
+    if (s.salaries.isNotEmpty) _buildSalariesSheet(excel, s);
+    if (s.debts.isNotEmpty) _buildDebtsSheet(excel, s);
     _buildSummarySheet(excel, s);
 
     // نحذف الورقة الافتراضية الفارغة
@@ -285,6 +287,80 @@ class ExcelService {
     _autoWidth(sheet, 11);
   }
 
+  /// ورقة رواتب الموظفين
+  void _buildSalariesSheet(Excel excel, PeriodSummary s) {
+    final sheet = excel['رواتب الموظفين'];
+    _headerRow(sheet, [
+      'التاريخ',
+      'الموظف',
+      'نوع الدفعة',
+      'عن شهر',
+      'طريقة الدفع',
+      'المبلغ',
+      'ملاحظات',
+    ]);
+
+    for (final p in s.salaries) {
+      sheet.appendRow([
+        TextCellValue(Fmt.date(p.date)),
+        TextCellValue(p.employeeName),
+        TextCellValue(p.kind.label),
+        TextCellValue(p.forMonth == null ? '' : Fmt.monthName(p.forMonth!)),
+        TextCellValue(p.method.label),
+        DoubleCellValue(p.amount),
+        TextCellValue(p.notes),
+      ]);
+    }
+
+    _totalsRow(sheet, ['الإجمالي', '', '', '', ''], [s.salariesTotal]);
+    _autoWidth(sheet, 7);
+  }
+
+  /// ورقة ديون العملاء
+  void _buildDebtsSheet(Excel excel, PeriodSummary s) {
+    final sheet = excel['ديون العملاء'];
+    _headerRow(sheet, [
+      'التاريخ',
+      'الاسم',
+      'الهاتف',
+      'العنوان',
+      'السبب',
+      'تاريخ الاستحقاق',
+      'مبلغ الدين',
+      'المسدَّد',
+      'المتبقي',
+      'الحالة',
+      'ملاحظات',
+    ]);
+
+    for (final d in s.debts) {
+      sheet.appendRow([
+        TextCellValue(Fmt.date(d.date)),
+        TextCellValue(d.personName),
+        TextCellValue(d.personPhone),
+        TextCellValue(d.personAddress),
+        TextCellValue(d.reason),
+        TextCellValue(d.dueDate == null ? '' : Fmt.date(d.dueDate!)),
+        DoubleCellValue(d.amount),
+        DoubleCellValue(d.paid),
+        DoubleCellValue(d.remaining),
+        TextCellValue(d.isOverdue ? 'متأخر' : (d.isPaidOff ? 'مسدَّد' : 'قائم')),
+        TextCellValue(d.notes),
+      ]);
+    }
+
+    _totalsRow(
+      sheet,
+      ['الإجمالي', '', '', '', '', ''],
+      [
+        s.debts.fold(0.0, (a, d) => a + d.amount),
+        s.debts.fold(0.0, (a, d) => a + d.paid),
+        s.debtsTotal,
+      ],
+    );
+    _autoWidth(sheet, 11);
+  }
+
   void _buildSummarySheet(Excel excel, PeriodSummary s) {
     final sheet = excel['الملخص'];
     final g = s.grandTotals;
@@ -332,6 +408,16 @@ class ExcelService {
     line('الصادر (مصاريف ومشتريات)', s.cashTotals.expense);
     line('إجمالي الداخل', g.paid + s.cashTotals.income, bold: true);
     line('صافي حركة النقد', s.netCashFlow, bold: true);
+    line('', '');
+    line('الكاش الموجود في المحل (نقدًا فقط)', s.cashBalance.balance, bold: true);
+    if (s.salaries.isNotEmpty) {
+      line('', '');
+      line('رواتب مدفوعة في الفترة', s.salariesTotal);
+    }
+    if (s.debts.isNotEmpty) {
+      line('', '');
+      line('ديون قائمة على العملاء', s.debtsTotal);
+    }
 
     if (s.dayNotes.isNotEmpty) {
       line('', '');

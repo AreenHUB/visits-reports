@@ -167,6 +167,60 @@ final dayNoteProvider = FutureProvider.autoDispose<String>((ref) async {
   return ref.read(repoProvider).dayNote(day);
 });
 
+// ------------------------------------------------------- رصيد الكاش
+
+/// رصيد الكاش داخل المحل الآن — النقد فقط
+final cashBalanceProvider = FutureProvider.autoDispose<CashBalance>((ref) async {
+  ref.watch(refreshTickProvider);
+  return ref.read(repoProvider).cashBalance();
+});
+
+// --------------------------------------------------------- الموظفون
+
+final employeeSearchProvider = StateProvider<String>((ref) => '');
+
+/// كل الموظفين مع دفعاتهم
+final employeesProvider = FutureProvider.autoDispose<List<EmployeeFull>>((ref) async {
+  ref.watch(refreshTickProvider);
+  return ref.read(repoProvider).employeesFull();
+});
+
+final employeeFullProvider =
+    FutureProvider.autoDispose.family<EmployeeFull?, String>((ref, id) async {
+  ref.watch(refreshTickProvider);
+  return ref.read(repoProvider).employeeFull(id);
+});
+
+// ----------------------------------------------------- ديون العملاء
+
+final debtSearchProvider = StateProvider<String>((ref) => '');
+
+/// عرض الديون المسدَّدة أيضًا أم غير المسدَّدة فقط
+final debtActiveOnlyProvider = StateProvider<bool>((ref) => true);
+
+final debtsProvider = FutureProvider.autoDispose<List<DebtRecord>>((ref) async {
+  ref.watch(refreshTickProvider);
+  final q = ref.watch(debtSearchProvider);
+  final activeOnly = ref.watch(debtActiveOnlyProvider);
+  return ref.read(repoProvider).debts(
+        search: q.isEmpty ? null : q,
+        activeOnly: activeOnly,
+      );
+});
+
+final debtsOutstandingProvider = FutureProvider.autoDispose<double>((ref) async {
+  ref.watch(refreshTickProvider);
+  return ref.read(repoProvider).totalDebtsOutstanding();
+});
+
+// -------------------------------------------------- خيارات التقرير
+
+/// ما الذي يُدرَج في ملف التقرير — محفوظ في الإعدادات
+final reportOptionsProvider = FutureProvider<ReportOptions>((ref) async {
+  ref.watch(refreshTickProvider);
+  return ref.read(repoProvider).reportOptions();
+});
+
 // ---------------------------------------------------------------- التقارير
 
 final periodSummaryProvider =

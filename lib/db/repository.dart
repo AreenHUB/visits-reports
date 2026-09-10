@@ -666,6 +666,227 @@ class Repository {
         .toList();
   }
 
+  // ------------------------------------------------------ رصيد الكاش
+
+  /// رصيد الكاش داخل المحل: النقد فقط، دون البطاقة أو التحويل.
+  ///
+  /// يجمع كل ما دخل نقدًا (دفعات الزيارات والسحوبات والوارد المستقل)
+  /// ناقص كل ما خرج نقدًا (المصاريف ودفعات الرواتب).
+  Future<CashBalance> cashBalance({DateTime? upTo}) async {
+    final db = await _db;
+    final limit = upTo == null
+        ? null
+        : AppDatabase.dayEnd(upTo).millisecondsSinceEpoch;
+
+    String dateClause(String col, {String prefix = ''}) =>
+        limit == null ? '' : ' AND $prefix$col <= $limit';
+
+    // الوارد النقدي المستقل
+    final incomeRow = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) AS v FROM cash_entries
+      WHERE direction = 'income' AND method = 'cash'${dateClause('date')}
+    ''');
+
+    // الصادر النقدي
+    final expenseRow = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) AS v FROM cash_entries
+      WHERE direction = 'expense' AND method = 'cash'${dateClause('date')}
+    ''');
+
+    // رواتب مدفوعة نقدًا
+    final salaryRow = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) AS v FROM salary_payments
+      WHERE method = 'cash'${dateClause('date')}
+    ''');
+
+    // دفعات الزيارات والسحوبات: جدول payments لا يحمل طريقة دفع،
+    // فنعتبرها نقدية ما لم تُسجَّل كحركة صندوق مرتبطة.
+    final visitPayRow = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) AS v FROM payments
+      WHERE id NOT LIKE 'cash_%'${dateClause('date')}
+    ''');
+
+    double val(List<Map<String, Object?>> rows) =>
+        ((rows.first['v'] as num?) ?? 0).toDouble();
+
+    return CashBalance(
+      cashIn: val(incomeRow) + val(visitPayRow),
+      cashOut: val(expenseRow) + val(salaryRow),
+    );
+  }
+
+  // ------------------------------------------------------- الموظفون
+
+  Future<List<Employee>> employees({bool? active, String? search}) async {
+    final db = await _db;
+    final where = <String>[];
+    final args = <Object?>[];
+
+    if (active != null) {
+      where.add('active = ?');
+      args.add(active ? 1 : 0);
+    }
+    if (search != null && search.trim().isNotEmpty) {
+      where.add('(name LIKE ? OR phone LIKE ? OR role LIKE ?)');
+      args.addAll(List.filled(3, '%${search.trim()}%'));
+    }
+
+    final rows = await db.query(
+      'employees',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'active DESC, name COLLATE NOCASE ASC',
+    );
+    return rows.map(Employee.fromMap).toList();
+  }
+
+  Future<Employee?> employeeById(String id) async {
+    final db = await _db;
+    final rows = await db.query('employees', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : Employee.fromMap(rows.first);
+  }
+
+  Future<void> saveEmployee(Employee e) async {
+    final db = await _db;
+    e.updatedAt = DateTime.now();
+    await db.insert('employees', e.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+
+    // نحدّث الاسم المنسوخ في الدفعات ليبقى العرض متّسقًا
+    await db.update('salary_payments', {'employee_name': e.name},
+        where: 'employee_id = ?', whereArgs: [e.id]);
+  }
+
+  Future<void> deleteEmployee(String id) async {
+    final db = await _db;
+    await db.delete('employees', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<EmployeeFull?> employeeFull(String id) async {
+    final e = await employeeById(id);
+    if (e == null) return null;
+    return EmployeeFull(employee: e, payments: await salaryPaymentsFor(id));
+  }
+
+  /// كل الموظفين مع دفعاتهم دفعة واحدة
+  Future<List<EmployeeFull>> employeesFull({bool? active}) async {
+    final list = await employees(active: active);
+    if (list.isEmpty) return [];
+
+    final db = await _db;
+    final rows = await db.query('salary_payments', orderBy: 'date DESC');
+    final byEmployee = <String, List<SalaryPayment>>{};
+    for (final r in rows) {
+      final p = SalaryPayment.fromMap(r);
+      byEmployee.putIfAbsent(p.employeeId, () => []).add(p);
+    }
+
+    return list
+        .map((e) =>
+            EmployeeFull(employee: e, payments: byEmployee[e.id] ?? const []))
+        .toList();
+  }
+
+  Future<List<SalaryPayment>> salaryPaymentsFor(String employeeId) async {
+    final db = await _db;
+    final rows = await db.query('salary_payments',
+        where: 'employee_id = ?', whereArgs: [employeeId], orderBy: 'date DESC');
+    return rows.map(SalaryPayment.fromMap).toList();
+  }
+
+  /// دفعات الرواتب ضمن فترة — تُستخدم في التقرير
+  Future<List<SalaryPayment>> salaryPayments({DateTime? from, DateTime? to}) async {
+    final db = await _db;
+    final where = <String>[];
+    final args = <Object?>[];
+
+    if (from != null) {
+      where.add('date >= ?');
+      args.add(AppDatabase.dayStart(from).millisecondsSinceEpoch);
+    }
+    if (to != null) {
+      where.add('date <= ?');
+      args.add(AppDatabase.dayEnd(to).millisecondsSinceEpoch);
+    }
+
+    final rows = await db.query(
+      'salary_payments',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'date DESC',
+    );
+    return rows.map(SalaryPayment.fromMap).toList();
+  }
+
+  Future<void> saveSalaryPayment(SalaryPayment p) async {
+    final db = await _db;
+    await db.insert('salary_payments', p.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteSalaryPayment(String id) async {
+    final db = await _db;
+    await db.delete('salary_payments', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --------------------------------------------------- ديون العملاء
+
+  Future<List<DebtRecord>> debts({String? search, bool activeOnly = false}) async {
+    final db = await _db;
+    final where = <String>[];
+    final args = <Object?>[];
+
+    if (search != null && search.trim().isNotEmpty) {
+      where.add('(person_name LIKE ? OR person_phone LIKE ? OR reason LIKE ?)');
+      args.addAll(List.filled(3, '%${search.trim()}%'));
+    }
+    if (activeOnly) where.add('(amount - paid) > 0.009');
+
+    final rows = await db.query(
+      'debts',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'date DESC',
+    );
+    return rows.map(DebtRecord.fromMap).toList();
+  }
+
+  Future<DebtRecord?> debtById(String id) async {
+    final db = await _db;
+    final rows = await db.query('debts', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : DebtRecord.fromMap(rows.first);
+  }
+
+  Future<void> saveDebt(DebtRecord d) async {
+    final db = await _db;
+    d.updatedAt = DateTime.now();
+    await db.insert('debts', d.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteDebt(String id) async {
+    final db = await _db;
+    await db.delete('debts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// إجمالي ما لنا عند الناس من ديون غير مسدَّدة
+  Future<double> totalDebtsOutstanding() async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+        'SELECT COALESCE(SUM(amount - paid), 0) AS v FROM debts WHERE (amount - paid) > 0.009');
+    return ((rows.first['v'] as num?) ?? 0).toDouble();
+  }
+
+  // ------------------------------------------------- خيارات التقرير
+
+  Future<ReportOptions> reportOptions() async =>
+      ReportOptions.fromMap(await allSettings());
+
+  Future<void> saveReportOptions(ReportOptions o) async {
+    for (final e in o.toMap().entries) {
+      await setSetting(e.key, e.value);
+    }
+  }
+
   // ---------------------------------------------------------- الإعدادات
 
   Future<String?> setting(String key) async {
@@ -696,6 +917,9 @@ class Repository {
     final cs = await creditsFull(from: from, to: to);
     final cash = await cashEntries(from: from, to: to);
     final notes = await dayNotesInRange(from, to);
+    final salaries = await salaryPayments(from: from, to: to);
+    final debtList = await debts(activeOnly: true);
+    final balance = await cashBalance(upTo: to);
 
     var visitTotals = const Totals();
     for (final v in vs) {
@@ -713,6 +937,9 @@ class Repository {
       credits: cs,
       cash: cash,
       dayNotes: notes,
+      salaries: salaries,
+      debts: debtList,
+      cashBalance: balance,
       visitTotals: visitTotals,
       creditTotals: creditTotals,
     );
@@ -772,6 +999,15 @@ class PeriodSummary {
   /// ملاحظات الأيام ضمن الفترة
   final List<DayNote> dayNotes;
 
+  /// دفعات الرواتب ضمن الفترة
+  final List<SalaryPayment> salaries;
+
+  /// الديون غير المسدَّدة (كل الديون القائمة، لا المرتبطة بالفترة فقط)
+  final List<DebtRecord> debts;
+
+  /// رصيد الكاش داخل المحل حتى نهاية الفترة
+  final CashBalance cashBalance;
+
   final Totals visitTotals;
   final Totals creditTotals;
 
@@ -782,6 +1018,9 @@ class PeriodSummary {
     required this.credits,
     this.cash = const [],
     this.dayNotes = const [],
+    this.salaries = const [],
+    this.debts = const [],
+    this.cashBalance = const CashBalance(),
     required this.visitTotals,
     required this.creditTotals,
   });
@@ -819,7 +1058,33 @@ class PeriodSummary {
   /// ما حُصّل من الزيارات والسحوبات + الوارد المستقل - الصادر
   double get netCashFlow => grandTotals.paid + cashTotals.net;
 
-  bool get isEmpty => visits.isEmpty && credits.isEmpty && cash.isEmpty;
+  /// إجمالي الرواتب المدفوعة في الفترة
+  double get salariesTotal => salaries.fold(0.0, (s, p) => s + p.amount);
+
+  /// الرواتب مجمّعة حسب الموظف
+  Map<String, List<SalaryPayment>> get salariesByEmployee {
+    final map = <String, List<SalaryPayment>>{};
+    for (final p in salaries) {
+      map.putIfAbsent(p.employeeName, () => []).add(p);
+    }
+    return map;
+  }
+
+  /// إجمالي الديون القائمة على العملاء
+  double get debtsTotal => debts.fold(0.0, (s, d) => s + d.remaining);
+
+  bool get isEmpty =>
+      visits.isEmpty && credits.isEmpty && cash.isEmpty && salaries.isEmpty;
+}
+
+/// رصيد الكاش داخل المحل — النقد فقط
+class CashBalance {
+  final double cashIn;
+  final double cashOut;
+
+  const CashBalance({this.cashIn = 0, this.cashOut = 0});
+
+  double get balance => cashIn - cashOut;
 }
 
 /// ملاحظة عامة على يوم كامل
