@@ -179,15 +179,38 @@ class _ReportBody extends ConsumerStatefulWidget {
 class _ReportBodyState extends ConsumerState<_ReportBody> {
   bool _busy = false;
 
+  /// يشغّل عملية تصدير مع حماية كاملة.
+  ///
+  /// أي خطأ — من توليد الملف أو من نظام المشاركة نفسه — يُعرض للمستخدم
+  /// بدل أن يُسقط التطبيق. هذا ما كان يحدث مع تقارير الفترات الطويلة.
   Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
     setState(() => _busy = true);
     try {
       await action();
-    } catch (e) {
-      if (mounted) showSnack(context, 'حدث خطأ: $e', error: true);
+    } catch (e, st) {
+      debugPrint('فشل تصدير التقرير: $e\n$st');
+      if (mounted) {
+        showSnack(context, 'تعذّر إنشاء التقرير: ${_readableError(e)}',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// يحوّل الخطأ التقني إلى رسالة مفهومة
+  static String _readableError(Object e) {
+    final text = e.toString();
+    if (text.contains('No Activity found') ||
+        text.contains('ActivityNotFound')) {
+      return 'لا يوجد تطبيق يستقبل الملف على هذا الجهاز';
+    }
+    if (text.contains('Permission') || text.contains('permission')) {
+      return 'لا توجد صلاحية كافية';
+    }
+    if (text.length > 120) return '${text.substring(0, 120)}…';
+    return text;
   }
 
   Future<File> _buildPdfFile() async {

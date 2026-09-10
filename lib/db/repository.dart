@@ -569,6 +569,12 @@ class Repository {
     await db.insert('cash_entries', e.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
 
+    // تحصيل دين من عميل مرتبط بسجل دين: يُخصم من رصيد ذلك الدين
+    // مباشرة، فلا يحتاج المستخدم لتسجيله مرتين.
+    if (e.linkedDebtId != null) {
+      await _applyDebtCollection(e);
+    }
+
     // سداد دين مرتبط بسحب آجل يُسجَّل أيضًا كدفعة على ذلك السحب،
     // حتى يبقى رصيد السحب صحيحًا في مكان واحد.
     if (e.linkedCreditId != null) {
@@ -593,11 +599,68 @@ class Repository {
   Future<void> deleteCashEntry(String id) async {
     final db = await _db;
     final entry = await cashEntryById(id);
+
+    // نتراجع عن أثر الحركة على الدين قبل حذفها
+    if (entry?.linkedDebtId != null) {
+      await _revertDebtCollection(entry!);
+    }
+
     await db.delete('payments', where: 'id = ?', whereArgs: ['cash_$id']);
     await db.delete('cash_entries', where: 'id = ?', whereArgs: [id]);
+
     if (entry?.linkedCreditId != null) {
       await _refreshCreditSettlement(entry!.linkedCreditId!);
     }
+  }
+
+  /// يعيد حساب المسدَّد على دين عميل من مجموع الحركات المرتبطة به.
+  ///
+  /// نحسبه من الحركات بدل الجمع التراكمي حتى يبقى صحيحًا مهما
+  /// عُدِّلت الحركات أو حُذفت.
+  Future<void> _applyDebtCollection(CashEntry e) async {
+    final debt = await debtById(e.linkedDebtId!);
+    if (debt == null) return;
+    await _recomputeDebtPaid(debt);
+  }
+
+  Future<void> _revertDebtCollection(CashEntry e) async {
+    final debt = await debtById(e.linkedDebtId!);
+    if (debt == null) return;
+    await _recomputeDebtPaid(debt, excludeEntryId: e.id);
+  }
+
+  /// يجمع كل الحركات المرتبطة بالدين ويكتب الناتج في حقل المسدَّد
+  Future<void> _recomputeDebtPaid(
+    DebtRecord debt, {
+    String? excludeEntryId,
+  }) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE(SUM(amount), 0) AS v FROM cash_entries "
+      "WHERE linked_debt_id = ? AND direction = 'income'"
+      "${excludeEntryId == null ? '' : ' AND id != ?'}",
+      [debt.id, ?excludeEntryId],
+    );
+
+    final collected = ((rows.first['v'] as num?) ?? 0).toDouble();
+
+    // ما سُجِّل يدويًا على الدين قبل الربط يبقى محفوظًا
+    final manual = debt.manualPaid;
+    await db.update(
+      'debts',
+      {
+        'paid': manual + collected,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [debt.id],
+    );
+  }
+
+  /// الديون غير المسدَّدة — لربط تحصيل الدين بها
+  Future<List<DebtRecord>> unpaidDebts() async {
+    final all = await debts(activeOnly: true);
+    return all.where((d) => d.remaining > 0.009).toList();
   }
 
   /// يعيد حساب حالة السداد لسحب آجل بعد تغيّر دفعاته
@@ -672,38 +735,53 @@ class Repository {
   ///
   /// يجمع كل ما دخل نقدًا (دفعات الزيارات والسحوبات والوارد المستقل)
   /// ناقص كل ما خرج نقدًا (المصاريف ودفعات الرواتب).
-  Future<CashBalance> cashBalance({DateTime? upTo}) async {
+  /// رصيد الكاش داخل المحل: النقد فقط، دون البطاقة أو التحويل البنكي.
+  ///
+  /// [upTo] يحدّ الحساب حتى نهاية ذلك اليوم (الرصيد التراكمي حتى تاريخ).
+  /// [from] يحصر الحساب في فترة (حركة الكاش في يوم أو مدى).
+  ///
+  /// التحويل الداخلي بين الكاش والبنك يُحتسب هنا لأنه ينقل نقدًا فعليًا
+  /// من الدرج أو إليه، وإن كان لا يُعدّ دخلًا ولا مصروفًا للمحل.
+  Future<CashBalance> cashBalance({DateTime? upTo, DateTime? from}) async {
     final db = await _db;
-    final limit = upTo == null
-        ? null
-        : AppDatabase.dayEnd(upTo).millisecondsSinceEpoch;
 
-    String dateClause(String col, {String prefix = ''}) =>
-        limit == null ? '' : ' AND $prefix$col <= $limit';
+    final upperMs =
+        upTo == null ? null : AppDatabase.dayEnd(upTo).millisecondsSinceEpoch;
+    final lowerMs =
+        from == null ? null : AppDatabase.dayStart(from).millisecondsSinceEpoch;
 
-    // الوارد النقدي المستقل
+    String range(String col) {
+      final parts = <String>[];
+      if (lowerMs != null) parts.add(' AND $col >= $lowerMs');
+      if (upperMs != null) parts.add(' AND $col <= $upperMs');
+      return parts.join();
+    }
+
+    // الوارد النقدي المستقل (بما فيه السحب من البنك)
     final incomeRow = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) AS v FROM cash_entries
-      WHERE direction = 'income' AND method = 'cash'${dateClause('date')}
+      WHERE direction = 'income' AND method = 'cash'${range('date')}
     ''');
 
-    // الصادر النقدي
+    // الصادر النقدي (بما فيه الإيداع في البنك)
     final expenseRow = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) AS v FROM cash_entries
-      WHERE direction = 'expense' AND method = 'cash'${dateClause('date')}
+      WHERE direction = 'expense' AND method = 'cash'
+        AND id NOT LIKE 'salary_%'${range('date')}
     ''');
 
     // رواتب مدفوعة نقدًا
     final salaryRow = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) AS v FROM salary_payments
-      WHERE method = 'cash'${dateClause('date')}
+      WHERE method = 'cash'${range('date')}
     ''');
 
-    // دفعات الزيارات والسحوبات: جدول payments لا يحمل طريقة دفع،
-    // فنعتبرها نقدية ما لم تُسجَّل كحركة صندوق مرتبطة.
+    // دفعات الزيارات والسحوبات النقدية.
+    // الدفعات التي أنشأتها حركة صندوق (id يبدأ بـ cash_) مستبعدة
+    // لأن الحركة نفسها محسوبة أعلاه، فلا تُحتسب مرتين.
     final visitPayRow = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) AS v FROM payments
-      WHERE id NOT LIKE 'cash_%'${dateClause('date')}
+      WHERE method = 'cash' AND id NOT LIKE 'cash_%'${range('date')}
     ''');
 
     double val(List<Map<String, Object?>> rows) =>
@@ -713,6 +791,17 @@ class Repository {
       cashIn: val(incomeRow) + val(visitPayRow),
       cashOut: val(expenseRow) + val(salaryRow),
     );
+  }
+
+  /// حركة الكاش في يوم واحد — كم دخل الدرج وكم خرج منه ذلك اليوم
+  Future<CashBalance> dayCashFlow(DateTime day) =>
+      cashBalance(from: day, upTo: day);
+
+  /// صورة كاملة عن الكاش: حركة اليوم والرصيد المتراكم حتى نهايته
+  Future<CashSnapshot> cashSnapshot(DateTime day) async {
+    final today = await dayCashFlow(day);
+    final running = await cashBalance(upTo: day);
+    return CashSnapshot(day: today, running: running);
   }
 
   // ------------------------------------------------------- الموظفون
@@ -822,11 +911,48 @@ class Repository {
     final db = await _db;
     await db.insert('salary_payments', p.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
+
+    // نسجّل قيدًا مرآةً في الصندوق ليظهر الراتب ضمن صادر اليوم،
+    // فيرى المستخدم سبب نقص الكاش في مكانه الطبيعي.
+    await _syncSalaryCashEntry(p);
   }
 
   Future<void> deleteSalaryPayment(String id) async {
     final db = await _db;
     await db.delete('salary_payments', where: 'id = ?', whereArgs: [id]);
+    await db.delete('cash_entries', where: 'id = ?', whereArgs: ['salary_$id']);
+  }
+
+  /// معرّف القيد المرآة لدفعة راتب
+  static String salaryEntryId(String paymentId) => 'salary_$paymentId';
+
+  /// ينشئ أو يحدّث قيد الصندوق المقابل لدفعة راتب.
+  ///
+  /// القيد يحمل معرّفًا مشتقًا من الدفعة، ويُستبعد من حساب الكاش
+  /// حتى لا يُخصم المبلغ مرتين (مرة من جدول الرواتب ومرة من الصندوق).
+  Future<void> _syncSalaryCashEntry(SalaryPayment p) async {
+    final db = await _db;
+    final id = salaryEntryId(p.id);
+    final now = DateTime.now();
+
+    await db.insert(
+      'cash_entries',
+      CashEntry(
+        id: id,
+        direction: CashDirection.expense,
+        categoryKey: CashCategory.salary.key,
+        categoryLabel: CashCategory.salary.label,
+        description: '${p.kind.label} — ${p.employeeName}',
+        partyName: p.employeeName,
+        amount: p.amount,
+        method: p.method,
+        date: p.date,
+        notes: p.notes,
+        createdAt: now,
+        updatedAt: now,
+      ).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   // --------------------------------------------------- ديون العملاء
@@ -920,6 +1046,7 @@ class Repository {
     final salaries = await salaryPayments(from: from, to: to);
     final debtList = await debts(activeOnly: true);
     final balance = await cashBalance(upTo: to);
+    final periodCash = await cashBalance(from: from, upTo: to);
 
     var visitTotals = const Totals();
     for (final v in vs) {
@@ -940,6 +1067,7 @@ class Repository {
       salaries: salaries,
       debts: debtList,
       cashBalance: balance,
+      periodCashFlow: periodCash,
       visitTotals: visitTotals,
       creditTotals: creditTotals,
     );
@@ -1005,8 +1133,11 @@ class PeriodSummary {
   /// الديون غير المسدَّدة (كل الديون القائمة، لا المرتبطة بالفترة فقط)
   final List<DebtRecord> debts;
 
-  /// رصيد الكاش داخل المحل حتى نهاية الفترة
+  /// رصيد الكاش داخل المحل حتى نهاية الفترة (تراكمي)
   final CashBalance cashBalance;
+
+  /// حركة الكاش داخل الفترة نفسها: كم دخل الدرج وكم خرج منه
+  final CashBalance periodCashFlow;
 
   final Totals visitTotals;
   final Totals creditTotals;
@@ -1021,6 +1152,7 @@ class PeriodSummary {
     this.salaries = const [],
     this.debts = const [],
     this.cashBalance = const CashBalance(),
+    this.periodCashFlow = const CashBalance(),
     required this.visitTotals,
     required this.creditTotals,
   });
@@ -1073,6 +1205,15 @@ class PeriodSummary {
   /// إجمالي الديون القائمة على العملاء
   double get debtsTotal => debts.fold(0.0, (s, d) => s + d.remaining);
 
+  /// صافي التحويلات الداخلية بين الكاش والبنك في الفترة.
+  ///
+  /// سالب يعني أن مالًا انتقل من الدرج إلى البنك، وموجب يعني العكس.
+  /// هذا ليس دخلًا ولا مصروفًا — المال يبقى ملك المحل.
+  double get internalTransfers => CashTotals.transfersOf(cash);
+
+  /// هل في الفترة تحويلات داخلية تستحق العرض؟
+  bool get hasTransfers => internalTransfers.abs() > 0.009;
+
   bool get isEmpty =>
       visits.isEmpty && credits.isEmpty && cash.isEmpty && salaries.isEmpty;
 }
@@ -1085,6 +1226,29 @@ class CashBalance {
   const CashBalance({this.cashIn = 0, this.cashOut = 0});
 
   double get balance => cashIn - cashOut;
+}
+
+/// صورة الكاش في يوم: حركته ذلك اليوم، والرصيد المتراكم حتى نهايته
+class CashSnapshot {
+  /// ما دخل وخرج نقدًا في هذا اليوم وحده
+  final CashBalance day;
+
+  /// الرصيد المتراكم منذ البداية حتى نهاية هذا اليوم
+  final CashBalance running;
+
+  const CashSnapshot({
+    this.day = const CashBalance(),
+    this.running = const CashBalance(),
+  });
+
+  /// صافي حركة اليوم: موجب إذا زاد الدرج، سالب إذا نقص
+  double get dayNet => day.balance;
+
+  /// الكاش الموجود فعليًا في نهاية اليوم
+  double get closingBalance => running.balance;
+
+  /// الرصيد في بداية اليوم = رصيد النهاية ناقص حركة اليوم
+  double get openingBalance => running.balance - day.balance;
 }
 
 /// ملاحظة عامة على يوم كامل

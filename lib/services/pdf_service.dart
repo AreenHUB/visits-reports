@@ -1380,6 +1380,30 @@ class PdfService {
             net >= 0 ? const PdfColor.fromInt(0xFF1565C0) : _red,
             bold: true,
           ),
+          if (s.salariesTotal > 0.009)
+            line('منها رواتب مدفوعة', s.salariesTotal, _red),
+          if (s.hasTransfers) ...[
+            pw.Divider(color: _line, height: 8),
+            line(
+              s.internalTransfers < 0
+                  ? 'أُودع في البنك (تحويل داخلي)'
+                  : 'سُحب من البنك (تحويل داخلي)',
+              s.internalTransfers.abs(),
+              const PdfColor.fromInt(0xFF1565C0),
+            ),
+            pw.Text(
+              'التحويل بين الكاش والبنك ينقل المال ولا يُعدّ دخلًا ولا مصروفًا',
+              style: _s(size: 8, color: _grey),
+            ),
+          ],
+          pw.Divider(color: _line, height: 8),
+          line(
+            'حركة الكاش في الفترة (نقدًا)',
+            s.periodCashFlow.balance,
+            s.periodCashFlow.balance >= 0
+                ? const PdfColor.fromInt(0xFF2E7D32)
+                : _red,
+          ),
         ],
       ),
     );

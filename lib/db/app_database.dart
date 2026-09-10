@@ -16,7 +16,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbFileName = 'alaqsa_visits.db';
-  static const _schemaVersion = 3;
+  static const _schemaVersion = 4;
 
   Database? _db;
 
@@ -135,6 +135,7 @@ class AppDatabase {
         credit_id TEXT,
         amount REAL NOT NULL,
         date INTEGER NOT NULL,
+        method TEXT DEFAULT 'cash',
         notes TEXT DEFAULT '',
         FOREIGN KEY (visit_id) REFERENCES visits (id) ON DELETE CASCADE,
         FOREIGN KEY (credit_id) REFERENCES credits (id) ON DELETE CASCADE
@@ -206,9 +207,11 @@ class AppDatabase {
       date INTEGER NOT NULL,
       notes TEXT DEFAULT '',
       linked_credit_id TEXT,
+      linked_debt_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      FOREIGN KEY (linked_credit_id) REFERENCES credits (id) ON DELETE SET NULL
+      FOREIGN KEY (linked_credit_id) REFERENCES credits (id) ON DELETE SET NULL,
+      FOREIGN KEY (linked_debt_id) REFERENCES debts (id) ON DELETE SET NULL
     )
   ''';
 
@@ -263,6 +266,7 @@ class AppDatabase {
       person_address TEXT DEFAULT '',
       amount REAL NOT NULL DEFAULT 0,
       paid REAL NOT NULL DEFAULT 0,
+      manual_paid REAL NOT NULL DEFAULT 0,
       reason TEXT DEFAULT '',
       date INTEGER NOT NULL,
       due_date INTEGER,
@@ -293,6 +297,33 @@ class AppDatabase {
           'CREATE INDEX IF NOT EXISTS idx_salary_date ON salary_payments (date)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_debts_date ON debts (date)');
     }
+
+    // الترقية إلى الإصدار 4: طريقة الدفع للدفعات، وربط الحركة بدين عميل.
+    // ALTER TABLE ADD COLUMN لا يمسّ أي صف موجود؛ الصفوف القديمة تأخذ
+    // القيمة الافتراضية 'cash' وهو ما كان يفترضه الحساب سابقًا.
+    if (from < 4) {
+      await _addColumnIfMissing(db, 'payments', 'method', "TEXT DEFAULT 'cash'");
+      await _addColumnIfMissing(db, 'cash_entries', 'linked_debt_id', 'TEXT');
+      await _addColumnIfMissing(
+          db, 'debts', 'manual_paid', 'REAL NOT NULL DEFAULT 0');
+
+      // الديون القديمة: ما سُدِّد فيها كان كله يدويًا
+      await db.execute(
+          'UPDATE debts SET manual_paid = paid WHERE manual_paid = 0 AND paid > 0');
+    }
+  }
+
+  /// يضيف عمودًا إن لم يكن موجودًا — يجعل الترقية آمنة عند إعادة تشغيلها
+  Future<void> _addColumnIfMissing(
+    Database db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final cols = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = cols.any((c) => c['name'] == column);
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   // ---------------------------------------------------------------- الأدوات

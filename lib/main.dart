@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'db/app_database.dart';
+import 'providers/providers.dart';
 import 'screens/cash_screen.dart';
 import 'screens/credits_screen.dart';
 import 'screens/home_screen.dart';
@@ -24,17 +25,18 @@ Future<void> main() async {
   runApp(const ProviderScope(child: AlAqsaApp()));
 }
 
-class AlAqsaApp extends StatelessWidget {
+class AlAqsaApp extends ConsumerWidget {
   const AlAqsaApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp(
       title: 'الأقصى - الزيارات',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
 
       // التطبيق عربي بالكامل، الاتجاه من اليمين لليسار
       locale: const Locale('ar'),

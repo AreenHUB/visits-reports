@@ -124,6 +124,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ListView(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 30),
           children: [
+            const SectionHeader('المظهر', icon: Icons.palette_rounded),
+            const _ThemeModeSelector(),
+
             const SectionHeader('بيانات المحل', icon: Icons.store_rounded),
             settingsAsync.when(
               loading: () => const Padding(
@@ -434,4 +437,37 @@ class _InfoBox extends StatelessWidget {
           ),
         ]),
       );
+}
+
+/// اختيار وضع العرض: فاتح، داكن، أو حسب النظام
+class _ThemeModeSelector extends ConsumerWidget {
+  const _ThemeModeSelector();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(themeModeProvider);
+
+    return SegmentedButton<ThemeMode>(
+      segments: const [
+        ButtonSegment(
+          value: ThemeMode.light,
+          label: Text('فاتح'),
+          icon: Icon(Icons.light_mode_rounded, size: 18),
+        ),
+        ButtonSegment(
+          value: ThemeMode.system,
+          label: Text('النظام'),
+          icon: Icon(Icons.brightness_auto_rounded, size: 18),
+        ),
+        ButtonSegment(
+          value: ThemeMode.dark,
+          label: Text('داكن'),
+          icon: Icon(Icons.dark_mode_rounded, size: 18),
+        ),
+      ],
+      selected: {mode},
+      onSelectionChanged: (sel) =>
+          ref.read(themeModeProvider.notifier).set(sel.first),
+    );
+  }
 }

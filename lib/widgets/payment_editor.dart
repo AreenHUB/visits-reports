@@ -47,6 +47,7 @@ class _PaymentEditorSheetState extends State<PaymentEditorSheet> {
   late final TextEditingController _amount;
   late final TextEditingController _notes;
   late DateTime _date;
+  late PayMethod _method;
 
   @override
   void initState() {
@@ -57,6 +58,7 @@ class _PaymentEditorSheetState extends State<PaymentEditorSheet> {
     );
     _notes = TextEditingController(text: e?.notes ?? '');
     _date = e?.date ?? DateTime.now();
+    _method = e?.method ?? PayMethod.cash;
   }
 
   @override
@@ -83,6 +85,7 @@ class _PaymentEditorSheetState extends State<PaymentEditorSheet> {
         creditId: widget.creditId,
         amount: amount,
         date: _date,
+        method: _method,
         notes: _notes.text.trim(),
       ),
     );
@@ -150,6 +153,50 @@ class _PaymentEditorSheetState extends State<PaymentEditorSheet> {
               ),
             ],
 
+            const SizedBox(height: 14),
+
+            // طريقة الدفع: تحدّد هل يدخل المبلغ درج الكاش أم الحساب البنكي
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                'طريقة الدفع',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 7),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: PayMethod.values
+                  .map((m) => ChoiceChip(
+                        avatar: Icon(_methodIcon(m), size: 15),
+                        label: Text(m.label,
+                            style: const TextStyle(fontSize: 12.5)),
+                        selected: _method == m,
+                        onSelected: (_) => setState(() => _method = m),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                _method == PayMethod.cash
+                    ? 'سيُضاف المبلغ إلى كاش المحل'
+                    : 'لن يُضاف إلى كاش المحل — ${_method.label}',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: _method == PayMethod.cash
+                      ? AppTheme.success
+                      : scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+
             const SizedBox(height: 13),
 
             InkWell(
@@ -207,4 +254,12 @@ class _PaymentEditorSheetState extends State<PaymentEditorSheet> {
       ),
     );
   }
+
+  static IconData _methodIcon(PayMethod m) => switch (m) {
+        PayMethod.cash => Icons.payments_rounded,
+        PayMethod.card => Icons.credit_card_rounded,
+        PayMethod.transfer => Icons.account_balance_rounded,
+        PayMethod.cheque => Icons.receipt_long_rounded,
+        PayMethod.other => Icons.more_horiz_rounded,
+      };
 }

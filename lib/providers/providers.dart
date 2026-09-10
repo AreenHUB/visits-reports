@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../db/app_database.dart';
@@ -175,6 +176,14 @@ final cashBalanceProvider = FutureProvider.autoDispose<CashBalance>((ref) async 
   return ref.read(repoProvider).cashBalance();
 });
 
+/// صورة الكاش لليوم المعروض: حركته اليوم والرصيد المتراكم حتى نهايته
+final daySnapshotProvider =
+    FutureProvider.autoDispose<CashSnapshot>((ref) async {
+  ref.watch(refreshTickProvider);
+  final day = ref.watch(selectedDayProvider);
+  return ref.read(repoProvider).cashSnapshot(day);
+});
+
 // --------------------------------------------------------- الموظفون
 
 final employeeSearchProvider = StateProvider<String>((ref) => '');
@@ -212,6 +221,38 @@ final debtsOutstandingProvider = FutureProvider.autoDispose<double>((ref) async 
   ref.watch(refreshTickProvider);
   return ref.read(repoProvider).totalDebtsOutstanding();
 });
+
+// ------------------------------------------------- وضع العرض
+
+/// وضع العرض المختار: فاتح أو داكن أو حسب النظام
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.system) {
+    _load();
+  }
+
+  static const _key = 'theme_mode';
+
+  Future<void> _load() async {
+    final raw = await Repository.instance.setting(_key);
+    state = _parse(raw);
+  }
+
+  static ThemeMode _parse(String? raw) => switch (raw) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
+
+  Future<void> set(ThemeMode mode) async {
+    state = mode;
+    await Repository.instance.setSetting(_key, mode.name);
+  }
+}
+
+final themeModeProvider =
+    StateNotifierProvider<ThemeModeNotifier, ThemeMode>(
+  (ref) => ThemeModeNotifier(),
+);
 
 // -------------------------------------------------- خيارات التقرير
 

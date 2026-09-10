@@ -39,7 +39,10 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
   PayMethod _method = PayMethod.cash;
   DateTime _date = DateTime.now();
 
-  /// عند اختيار «سداد دين» نربط الحركة بسجل السحب الآجل
+  /// عند اختيار «تحصيل دين من عميل» نربط الحركة بسجل الدين
+  DebtRecord? _linkedDebt;
+
+  /// أو بسجل سحب آجل، إن كان الدين ناتجًا عن بضاعة مسحوبة
   CreditFull? _linkedCredit;
 
   String _entryId = '';
@@ -91,6 +94,9 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
     if (e.linkedCreditId != null) {
       _linkedCredit = await Repository.instance.creditFull(e.linkedCreditId!);
     }
+    if (e.linkedDebtId != null) {
+      _linkedDebt = await Repository.instance.debtById(e.linkedDebtId!);
+    }
 
     if (mounted) setState(() => _loading = false);
   }
@@ -103,33 +109,48 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
       // نعيد التصنيف لأول تصنيف من الاتجاه الجديد
       _category = CashCategory.forDirection(d).first;
       _linkedCredit = null;
+      _linkedDebt = null;
     });
   }
 
-  /// اختيار سجل سحب آجل ليُخصم منه السداد
-  Future<void> _pickCredit() async {
+  /// اختيار ما يُخصم منه التحصيل: دين عميل أو سحب آجل
+  Future<void> _pickDebtSource() async {
+    final debts = await Repository.instance.unpaidDebts();
     final credits = await ref.read(unsettledCreditsProvider.future);
     if (!mounted) return;
 
-    if (credits.isEmpty) {
-      showSnack(context, 'لا توجد ديون غير مسدَّدة', error: true);
+    if (debts.isEmpty && credits.isEmpty) {
+      showSnack(
+        context,
+        'لا توجد ديون قائمة. سجّل الدين أولًا من تبويب «المزيد ← ديون العملاء»',
+        error: true,
+      );
       return;
     }
 
-    final chosen = await showModalBottomSheet<CreditFull>(
+    final chosen = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => _CreditPicker(credits: credits),
+      builder: (_) => _DebtSourcePicker(debts: debts, credits: credits),
     );
     if (chosen == null || !mounted) return;
 
     setState(() {
-      _linkedCredit = chosen;
-      if (_party.text.trim().isEmpty) _party.text = chosen.credit.personName;
-      // نقترح المبلغ المتبقي كاملًا
-      if (_amount.text.trim().isEmpty) {
-        _amount.text = chosen.totals.remaining.toStringAsFixed(2);
+      if (chosen is DebtRecord) {
+        _linkedDebt = chosen;
+        _linkedCredit = null;
+        if (_party.text.trim().isEmpty) _party.text = chosen.personName;
+        if (_amount.text.trim().isEmpty) {
+          _amount.text = chosen.remaining.toStringAsFixed(2);
+        }
+      } else if (chosen is CreditFull) {
+        _linkedCredit = chosen;
+        _linkedDebt = null;
+        if (_party.text.trim().isEmpty) _party.text = chosen.credit.personName;
+        if (_amount.text.trim().isEmpty) {
+          _amount.text = chosen.totals.remaining.toStringAsFixed(2);
+        }
       }
     });
   }
@@ -137,12 +158,12 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (_isDebtPayment && _linkedCredit == null) {
+    if (_isDebtPayment && _linkedCredit == null && _linkedDebt == null) {
       final proceed = await confirmDialog(
         context,
         title: 'بدون ربط بدين',
-        message:
-            'لم تربط هذه الدفعة بسجل سحب آجل، فلن تُخصم من رصيد أي دين.\n\nهل تريد حفظها كوارد عام؟',
+        message: 'لم تربط هذا التحصيل بأي دين، فلن يُخصم من رصيد أحد.\n\n'
+            'هل تريد حفظه كوارد عام؟',
         confirmLabel: 'حفظ',
       );
       if (!proceed) return;
@@ -164,6 +185,7 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
         date: _date,
         notes: _notes.text.trim(),
         linkedCreditId: _isDebtPayment ? _linkedCredit?.credit.id : null,
+        linkedDebtId: _isDebtPayment ? _linkedDebt?.id : null,
         createdAt: now,
         updatedAt: now,
       ));
@@ -276,13 +298,17 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
               }).toList(),
             ),
 
-            // ربط سداد الدين بسجل السحب الآجل
+            // ربط التحصيل بدين عميل أو بسحب آجل
             if (_isDebtPayment) ...[
               const SizedBox(height: 12),
-              _LinkedCreditBox(
+              _LinkedDebtBox(
+                debt: _linkedDebt,
                 credit: _linkedCredit,
-                onPick: _pickCredit,
-                onClear: () => setState(() => _linkedCredit = null),
+                onPick: _pickDebtSource,
+                onClear: () => setState(() {
+                  _linkedDebt = null;
+                  _linkedCredit = null;
+                }),
               ),
             ],
 
@@ -422,13 +448,16 @@ class _CashFormScreenState extends ConsumerState<CashFormScreen> {
       };
 }
 
-/// صندوق ربط الحركة بسجل سحب آجل
-class _LinkedCreditBox extends StatelessWidget {
+
+/// صندوق يوضّح بأي دين ارتبط هذا التحصيل
+class _LinkedDebtBox extends StatelessWidget {
+  final DebtRecord? debt;
   final CreditFull? credit;
   final VoidCallback onPick;
   final VoidCallback onClear;
 
-  const _LinkedCreditBox({
+  const _LinkedDebtBox({
+    required this.debt,
     required this.credit,
     required this.onPick,
     required this.onClear,
@@ -437,16 +466,27 @@ class _LinkedCreditBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final c = credit;
 
-    if (c == null) {
-      return OutlinedButton.icon(
-        onPressed: onPick,
-        icon: const Icon(Icons.link_rounded, size: 19),
-        label: const Text('اربط بدين موجود (اختياري)'),
-        style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-      );
+    if (debt == null && credit == null) {
+      return Column(children: [
+        OutlinedButton.icon(
+          onPressed: onPick,
+          icon: const Icon(Icons.link_rounded, size: 19),
+          label: const Text('اربط بدين على عميل (اختياري)'),
+          style:
+              OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'الربط يخصم المبلغ من رصيد ذلك الدين تلقائيًا',
+          style: TextStyle(fontSize: 11.5, color: scheme.outline),
+        ),
+      ]);
     }
+
+    final name = debt?.personName ?? credit!.credit.personName;
+    final remaining = debt?.remaining ?? credit!.totals.remaining;
+    final kind = debt != null ? 'دين عميل' : 'سحب آجل';
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
@@ -460,13 +500,15 @@ class _LinkedCreditBox extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('مرتبط بدين',
-                style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.info)),
-            Text(c.credit.personName,
+            Text('مرتبط بـ $kind',
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.info)),
+            Text(name,
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
             Text(
-              'المتبقي عليه: ${Fmt.money(c.totals.remaining)}',
+              'المتبقي عليه: ${Fmt.money(remaining)}',
               style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
             ),
           ]),
@@ -481,13 +523,17 @@ class _LinkedCreditBox extends StatelessWidget {
   }
 }
 
-/// اختيار سجل سحب آجل من قائمة الديون غير المسدَّدة
-class _CreditPicker extends StatelessWidget {
+/// اختيار مصدر الدين: من ديون العملاء أو من السحوبات الآجلة
+class _DebtSourcePicker extends StatelessWidget {
+  final List<DebtRecord> debts;
   final List<CreditFull> credits;
-  const _CreditPicker({required this.credits});
+
+  const _DebtSourcePicker({required this.debts, required this.credits});
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       expand: false,
@@ -496,7 +542,7 @@ class _CreditPicker extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
           child: Row(children: [
             const Expanded(
-              child: Text('اختر الدين المراد سداده',
+              child: Text('اختر الدين المُحصَّل',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             ),
             IconButton(
@@ -506,45 +552,99 @@ class _CreditPicker extends StatelessWidget {
           ]),
         ),
         Expanded(
-          child: ListView.separated(
-            controller: controller,
-            itemCount: credits.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final c = credits[i];
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: AppTheme.warning.withValues(alpha: 0.15),
-                  child: Text(
-                    c.credit.personName.isEmpty
-                        ? '?'
-                        : c.credit.personName.characters.first,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, color: AppTheme.warning),
-                  ),
-                ),
-                title: Text(c.credit.personName,
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text(
-                  '${Fmt.date(c.credit.date)} — ${c.items.length} قطعة',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                trailing: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text('المتبقي', style: TextStyle(fontSize: 10.5)),
-                    Text(Fmt.moneyShort(c.totals.remaining),
+          child: ListView(controller: controller, children: [
+            if (debts.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+                child: Text('ديون العملاء',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.primary,
+                    )),
+              ),
+              ...debts.map((d) => ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.warning.withValues(alpha: 0.15),
+                      child: Text(
+                        d.personName.isEmpty
+                            ? '?'
+                            : d.personName.characters.first,
                         style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: AppTheme.danger)),
-                  ],
-                ),
-                onTap: () => Navigator.pop(context, c),
-              );
-            },
-          ),
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.warning),
+                      ),
+                    ),
+                    title: Text(d.personName,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      [
+                        Fmt.date(d.date),
+                        if (d.reason.isNotEmpty) d.reason,
+                      ].join(' — '),
+                      style: const TextStyle(fontSize: 12),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('المتبقي', style: TextStyle(fontSize: 10.5)),
+                        Text(Fmt.moneyShort(d.remaining),
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.danger)),
+                      ],
+                    ),
+                    onTap: () => Navigator.pop(context, d),
+                  )),
+            ],
+            if (credits.isNotEmpty) ...[
+              const Divider(height: 20),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+                child: Text('السحوبات الآجلة',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.primary,
+                    )),
+              ),
+              ...credits.map((c) => ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.info.withValues(alpha: 0.15),
+                      child: Text(
+                        c.credit.personName.isEmpty
+                            ? '?'
+                            : c.credit.personName.characters.first,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, color: AppTheme.info),
+                      ),
+                    ),
+                    title: Text(c.credit.personName,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      '${Fmt.date(c.credit.date)} — ${c.items.length} قطعة',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('المتبقي', style: TextStyle(fontSize: 10.5)),
+                        Text(Fmt.moneyShort(c.totals.remaining),
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.danger)),
+                      ],
+                    ),
+                    onTap: () => Navigator.pop(context, c),
+                  )),
+            ],
+          ]),
         ),
       ]),
     );

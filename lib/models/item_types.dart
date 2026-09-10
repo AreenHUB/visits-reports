@@ -52,7 +52,16 @@ class ItemTypes {
       SpecField(
         key: 'brand',
         label: 'الماركة',
-        options: ['Hikvision', 'Dahua', 'Uniview', 'TP-Link', 'Ezviz', 'Imou'],
+        options: [
+          'Hikvision',
+          'Dahua',
+          'Tiandy',
+          'Uniview',
+          'UNV',
+          'TP-Link',
+          'Ezviz',
+          'Imou',
+        ],
       ),
       SpecField(
         key: 'shape',
@@ -95,7 +104,17 @@ class ItemTypes {
       SpecField(
         key: 'brand',
         label: 'الماركة',
-        options: ['Hikvision', 'Dahua', 'TP-Link', 'Cisco', 'D-Link', 'Mikrotik'],
+        options: [
+          'Hikvision',
+          'Dahua',
+          'Tiandy',
+          'IP-COM',
+          'Oxion',
+          'TP-Link',
+          'Cisco',
+          'D-Link',
+          'Mikrotik',
+        ],
       ),
       SpecField(
         key: 'ports',
@@ -130,7 +149,14 @@ class ItemTypes {
       SpecField(
         key: 'brand',
         label: 'الماركة',
-        options: ['Hikvision', 'Dahua', 'Uniview', 'TP-Link'],
+        options: [
+          'Hikvision',
+          'Dahua',
+          'Tiandy',
+          'Uniview',
+          'UNV',
+          'TP-Link',
+        ],
       ),
       SpecField(
         key: 'device',
@@ -167,7 +193,15 @@ class ItemTypes {
       SpecField(
         key: 'brand',
         label: 'الماركة',
-        options: ['TP-Link', 'Mikrotik', 'Huawei', 'Tenda', 'Cisco', 'Ubiquiti'],
+        options: [
+          'TP-Link',
+          'Huawei',
+          'IP-COM',
+          'Mikrotik',
+          'Tenda',
+          'Cisco',
+          'Ubiquiti',
+        ],
       ),
       SpecField(key: 'model', label: 'الموديل', type: SpecFieldType.text),
       SpecField(
@@ -273,6 +307,32 @@ class ItemTypes {
     ],
   );
 
+  static const speaker = ItemType(
+    key: 'speaker',
+    label: 'سماعات',
+    icon: 'speaker',
+    fields: [
+      SpecField(
+        key: 'brand',
+        label: 'الماركة',
+        options: ['Oxion', 'Bosch', 'TOA', 'JBL', 'Ahuja'],
+      ),
+      SpecField(key: 'model', label: 'الموديل', type: SpecFieldType.text),
+      SpecField(
+        key: 'kind',
+        label: 'النوع',
+        options: ['سقفية', 'جدارية', 'بوق', 'عمود', 'مضخّم'],
+      ),
+      SpecField(
+        key: 'power',
+        label: 'القدرة',
+        type: SpecFieldType.number,
+        options: ['6', '10', '20', '30', '60'],
+        suffix: 'واط',
+      ),
+    ],
+  );
+
   static const other = ItemType(
     key: 'other',
     label: 'أخرى',
@@ -291,6 +351,7 @@ class ItemTypes {
     cable,
     power,
     storage,
+    speaker,
     accessory,
     other,
   ];

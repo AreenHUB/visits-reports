@@ -339,6 +339,10 @@ class Payment {
   String? creditId;
   double amount;
   DateTime date;
+
+  /// طريقة الدفع — تحدّد هل يدخل المبلغ صندوق الكاش أم لا
+  PayMethod method;
+
   String notes;
 
   Payment({
@@ -347,6 +351,7 @@ class Payment {
     this.creditId,
     required this.amount,
     required this.date,
+    this.method = PayMethod.cash,
     this.notes = '',
   });
 
@@ -356,6 +361,7 @@ class Payment {
         'credit_id': creditId,
         'amount': amount,
         'date': date.millisecondsSinceEpoch,
+        'method': method.name,
         'notes': notes,
       };
 
@@ -365,7 +371,26 @@ class Payment {
         creditId: m['credit_id'] as String?,
         amount: ((m['amount'] as num?) ?? 0).toDouble(),
         date: DateTime.fromMillisecondsSinceEpoch((m['date'] as int?) ?? 0),
+        // الدفعات القديمة بلا عمود method تُعتبر نقدية، وهو ما كان
+        // يفترضه الحساب قبل الإصدار الرابع
+        method: PayMethodX.fromCode(m['method'] as String?),
         notes: (m['notes'] as String?) ?? '',
+      );
+
+  Payment copyWith({
+    double? amount,
+    DateTime? date,
+    PayMethod? method,
+    String? notes,
+  }) =>
+      Payment(
+        id: id,
+        visitId: visitId,
+        creditId: creditId,
+        amount: amount ?? this.amount,
+        date: date ?? this.date,
+        method: method ?? this.method,
+        notes: notes ?? this.notes,
       );
 }
 
@@ -486,12 +511,30 @@ class CashCategory {
   const CashCategory(this.key, this.label, this.direction);
 
   static const sale = CashCategory('sale', 'بيع أغراض من المحل', CashDirection.income);
+  /// عميل يسدّد ما عليه لنا — لذلك هو وارد
   static const debtPayment =
-      CashCategory('debt_payment', 'سداد دين', CashDirection.income);
+      CashCategory('debt_payment', 'تحصيل دين من عميل', CashDirection.income);
   static const license =
       CashCategory('license', 'رسوم إصدار رخصة كاميرات', CashDirection.income);
   static const service = CashCategory('service', 'أجرة خدمة أو صيانة', CashDirection.income);
   static const otherIncome = CashCategory('other_income', 'وارد آخر', CashDirection.income);
+
+  /// إيداع الكاش في البنك أو سحبه منه.
+  ///
+  /// ليس مصروفًا: المال يبقى ملك المحل، لكنه ينتقل من الدرج إلى الحساب.
+  /// لذلك ينقص رصيد الكاش ولا يُحتسب ضمن المصاريف.
+  static const bankDeposit = CashCategory(
+    'bank_deposit',
+    'إيداع في البنك (تحويل داخلي)',
+    CashDirection.expense,
+  );
+
+  /// سحب من البنك إلى درج المحل
+  static const bankWithdraw = CashCategory(
+    'bank_withdraw',
+    'سحب من البنك (تحويل داخلي)',
+    CashDirection.income,
+  );
 
   static const purchase =
       CashCategory('purchase', 'شراء بضاعة', CashDirection.expense);
@@ -500,6 +543,10 @@ class CashCategory {
   static const salary = CashCategory('salary', 'رواتب وأجور', CashDirection.expense);
   static const transport = CashCategory('transport', 'مواصلات ووقود', CashDirection.expense);
   static const rent = CashCategory('rent', 'إيجار وفواتير', CashDirection.expense);
+  /// نحن نسدّد دينًا علينا لمورّد أو شخص — لذلك هو صادر
+  static const debtRepayment =
+      CashCategory('debt_repayment', 'سداد دين علينا', CashDirection.expense);
+
   static const otherExpense =
       CashCategory('other_expense', 'صادر آخر', CashDirection.expense);
 
@@ -508,6 +555,7 @@ class CashCategory {
     debtPayment,
     license,
     service,
+    bankWithdraw,
     otherIncome,
   ];
 
@@ -517,6 +565,8 @@ class CashCategory {
     salary,
     transport,
     rent,
+    debtRepayment,
+    bankDeposit,
     otherExpense,
   ];
 
@@ -550,6 +600,17 @@ class CashEntry {
   /// يربط سداد الدين بسجل السحب الآجل، ليُحتسب ضمن دفعاته
   String? linkedCreditId;
 
+  /// يربط تحصيل الدين بسجل دين عميل، ليُخصم من رصيده تلقائيًا
+  String? linkedDebtId;
+
+  /// هل هذه الحركة تحويل داخلي بين الكاش والبنك؟
+  ///
+  /// التحويل ينقل المال ولا يزيده ولا ينقصه، فلا يُحتسب ضمن
+  /// الوارد أو الصادر الحقيقي للمحل.
+  bool get isInternalTransfer =>
+      categoryKey == CashCategory.bankDeposit.key ||
+      categoryKey == CashCategory.bankWithdraw.key;
+
   final DateTime createdAt;
   DateTime updatedAt;
 
@@ -565,6 +626,7 @@ class CashEntry {
     required this.date,
     this.notes = '',
     this.linkedCreditId,
+    this.linkedDebtId,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -584,6 +646,7 @@ class CashEntry {
         'date': date.millisecondsSinceEpoch,
         'notes': notes,
         'linked_credit_id': linkedCreditId,
+        'linked_debt_id': linkedDebtId,
         'created_at': createdAt.millisecondsSinceEpoch,
         'updated_at': updatedAt.millisecondsSinceEpoch,
       };
@@ -600,6 +663,7 @@ class CashEntry {
         date: DateTime.fromMillisecondsSinceEpoch((m['date'] as int?) ?? 0),
         notes: (m['notes'] as String?) ?? '',
         linkedCreditId: m['linked_credit_id'] as String?,
+        linkedDebtId: m['linked_debt_id'] as String?,
         createdAt: DateTime.fromMillisecondsSinceEpoch((m['created_at'] as int?) ?? 0),
         updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updated_at'] as int?) ?? 0),
       );
@@ -615,6 +679,7 @@ class CashEntry {
     DateTime? date,
     String? notes,
     String? linkedCreditId,
+    String? linkedDebtId,
     bool clearLink = false,
   }) =>
       CashEntry(
@@ -629,6 +694,7 @@ class CashEntry {
         date: date ?? this.date,
         notes: notes ?? this.notes,
         linkedCreditId: clearLink ? null : (linkedCreditId ?? this.linkedCreditId),
+        linkedDebtId: clearLink ? null : (linkedDebtId ?? this.linkedDebtId),
         createdAt: createdAt,
         updatedAt: DateTime.now(),
       );
@@ -646,10 +712,13 @@ class CashTotals {
   CashTotals operator +(CashTotals o) =>
       CashTotals(income: income + o.income, expense: expense + o.expense);
 
+  /// يجمع الحركات مستبعدًا التحويلات الداخلية بين الكاش والبنك،
+  /// لأنها لا تمثّل دخلًا ولا مصروفًا حقيقيًا للمحل.
   static CashTotals from(Iterable<CashEntry> entries) {
     var inc = 0.0;
     var exp = 0.0;
     for (final e in entries) {
+      if (e.isInternalTransfer) continue;
       if (e.direction == CashDirection.income) {
         inc += e.amount;
       } else {
@@ -658,6 +727,11 @@ class CashTotals {
     }
     return CashTotals(income: inc, expense: exp);
   }
+
+  /// إجمالي التحويلات الداخلية في مجموعة حركات — للعرض المنفصل
+  static double transfersOf(Iterable<CashEntry> entries) => entries
+      .where((e) => e.isInternalTransfer)
+      .fold(0.0, (sum, e) => sum + e.signed);
 }
 
 // ---------------------------------------------------------------------------
@@ -869,8 +943,14 @@ class DebtRecord {
   /// المبلغ الأصلي للدين
   double amount;
 
-  /// ما سُدِّد منه حتى الآن
+  /// ما سُدِّد منه حتى الآن — مجموع اليدوي والمحصَّل عبر الصندوق
   double paid;
+
+  /// ما سُجِّل يدويًا من سداد، دون ما جاء عبر حركات الصندوق المرتبطة.
+  ///
+  /// نحفظه منفصلًا حتى تُعاد حسابات الربط دون أن تمحو ما أدخله
+  /// المستخدم بنفسه قبل الربط.
+  double manualPaid;
 
   String reason;
   DateTime date;
@@ -886,6 +966,7 @@ class DebtRecord {
     this.personAddress = '',
     this.amount = 0,
     this.paid = 0,
+    this.manualPaid = 0,
     this.reason = '',
     required this.date,
     this.dueDate,
@@ -908,6 +989,7 @@ class DebtRecord {
         'person_address': personAddress,
         'amount': amount,
         'paid': paid,
+        'manual_paid': manualPaid,
         'reason': reason,
         'date': date.millisecondsSinceEpoch,
         'due_date': dueDate?.millisecondsSinceEpoch,
@@ -923,6 +1005,9 @@ class DebtRecord {
         personAddress: (m['person_address'] as String?) ?? '',
         amount: ((m['amount'] as num?) ?? 0).toDouble(),
         paid: ((m['paid'] as num?) ?? 0).toDouble(),
+        // السجلات القديمة بلا عمود manual_paid: كل المسدَّد فيها يدوي
+        manualPaid: ((m['manual_paid'] as num?) ?? (m['paid'] as num?) ?? 0)
+            .toDouble(),
         reason: (m['reason'] as String?) ?? '',
         date: DateTime.fromMillisecondsSinceEpoch((m['date'] as int?) ?? 0),
         dueDate: m['due_date'] == null
@@ -939,6 +1024,7 @@ class DebtRecord {
     String? personAddress,
     double? amount,
     double? paid,
+    double? manualPaid,
     String? reason,
     DateTime? date,
     DateTime? dueDate,
@@ -952,6 +1038,7 @@ class DebtRecord {
         personAddress: personAddress ?? this.personAddress,
         amount: amount ?? this.amount,
         paid: paid ?? this.paid,
+        manualPaid: manualPaid ?? this.manualPaid,
         reason: reason ?? this.reason,
         date: date ?? this.date,
         dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),

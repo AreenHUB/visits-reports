@@ -551,10 +551,18 @@ class _SpecFieldWidget extends StatelessWidget {
     };
   }
 
+  /// المفتاح مفعّل إذا كانت هناك قيمة محفوظة أصلًا.
+  ///
+  /// القيمة تُخزَّن كنص (تسمية الحقل) لتظهر في الوصف والتقرير، لذلك
+  /// لا يصحّ مقارنتها بـ true — وهذا ما كان يمنع ظهور المفتاح مفعّلًا
+  /// ويمنع إلغاءه بعد التفعيل.
+  bool get _isOn =>
+      value == true || (value != null && '$value'.trim().isNotEmpty);
+
   Widget _toggle(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: SwitchListTile(
-          value: value == true,
+          value: _isOn,
           onChanged: (v) => onChanged(v ? field.label : null),
           title: Text(field.label, style: const TextStyle(fontSize: 14)),
           contentPadding: const EdgeInsets.symmetric(horizontal: 4),

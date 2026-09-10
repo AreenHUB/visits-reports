@@ -12,21 +12,38 @@ class ShareService {
   ShareService._();
   static final ShareService instance = ShareService._();
 
-  /// يشارك ملفًا واحدًا مع نص مرافق
+  /// يشارك ملفًا واحدًا مع نص مرافق.
+  ///
+  /// نمرّر النوع (mimeType) صراحةً ونسمّي الملف باسم لاتيني عند المشاركة،
+  /// لأن بعض تطبيقات المشاركة على أندرويد ترفض الأسماء غير اللاتينية
+  /// أو تفشل صامتةً معها.
   Future<void> shareFile(
     File file, {
     String? text,
     String? subject,
     Rect? origin,
   }) async {
+    final path = file.path;
+    final mime = _mimeFor(path);
+
     await SharePlus.instance.share(
       ShareParams(
-        files: [XFile(file.path)],
+        files: [XFile(path, mimeType: mime)],
         text: text,
         subject: subject,
         sharePositionOrigin: origin,
       ),
     );
+  }
+
+  static String? _mimeFor(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.xlsx')) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    if (lower.endsWith('.json')) return 'application/json';
+    return null;
   }
 
   Future<void> shareFiles(

@@ -26,6 +26,7 @@ class HomeScreen extends ConsumerWidget {
     final visitsAsync = ref.watch(dayVisitsProvider);
     final cashAsync = ref.watch(dayCashProvider);
     final noteAsync = ref.watch(dayNoteProvider);
+    final snapshotAsync = ref.watch(daySnapshotProvider);
     final isToday = AppDatabase.dayStart(DateTime.now()) == AppDatabase.dayStart(day);
 
     return Scaffold(
@@ -85,6 +86,7 @@ class HomeScreen extends ConsumerWidget {
             visits: visits,
             cash: cashAsync.valueOrNull ?? const [],
             dayNote: noteAsync.valueOrNull ?? '',
+            snapshot: snapshotAsync.valueOrNull ?? const CashSnapshot(),
             day: day,
           ),
         ),
@@ -160,12 +162,14 @@ class _DayContent extends ConsumerWidget {
   final List<VisitFull> visits;
   final List<CashEntry> cash;
   final String dayNote;
+  final CashSnapshot snapshot;
   final DateTime day;
 
   const _DayContent({
     required this.visits,
     required this.cash,
     required this.dayNote,
+    required this.snapshot,
     required this.day,
   });
 
@@ -206,7 +210,12 @@ class _DayContent extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 130),
       children: [
-        // ملخص الحركة المالية لليوم
+        // كاش اليوم مقابل الكاش المتراكم في المحل
+        _CashTwinCard(snapshot: snapshot, day: day),
+
+        const SizedBox(height: 10),
+
+        // ملخص الحركة المالية لليوم (كل طرق الدفع)
         Row(children: [
           Expanded(
             child: StatCard(
@@ -313,8 +322,14 @@ class _DayContent extends ConsumerWidget {
     try {
       final summary = await Repository.instance.summary(from: day, to: day);
       final settings = await ref.read(settingsProvider.future);
-      final bytes =
-          await PdfService.instance.buildReport(summary: summary, settings: settings);
+      // خيارات التضمين التي اختارها المستخدم في شاشة التقارير:
+      // بدونها كان التقرير اليومي يتجاهل الرواتب والديون دائمًا
+      final options = await ref.read(reportOptionsProvider.future);
+      final bytes = await PdfService.instance.buildReport(
+        summary: summary,
+        settings: settings,
+        options: options,
+      );
       final file = await PdfService.instance
           .saveToFile(bytes, PdfService.fileNameFor(summary));
 
@@ -327,10 +342,15 @@ class _DayContent extends ConsumerWidget {
         subject: 'تقرير الزيارات اليومي - ${Fmt.date(day)}',
         origin: origin,
       );
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('فشل تقرير اليوم: $e\n$st');
       if (!context.mounted) return;
       Navigator.pop(context);
-      showSnack(context, 'تعذّر إنشاء التقرير: $e', error: true);
+
+      final msg = e.toString().contains('No Activity found')
+          ? 'لا يوجد تطبيق يستقبل الملف على هذا الجهاز'
+          : 'تعذّر إنشاء التقرير';
+      showSnack(context, msg, error: true);
     }
   }
 }
@@ -525,4 +545,129 @@ class _Pill extends StatelessWidget {
           ),
         ]),
       );
+}
+
+/// بطاقة تعرض كاش اليوم بجانب الكاش المتراكم في المحل
+class _CashTwinCard extends StatelessWidget {
+  final CashSnapshot snapshot;
+  final DateTime day;
+
+  const _CashTwinCard({required this.snapshot, required this.day});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dayNet = snapshot.dayNet;
+    final closing = snapshot.closingBalance;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.25)),
+      ),
+      child: Column(children: [
+        Row(children: [
+          Expanded(
+            child: _CashCell(
+              label: 'كاش هذا اليوم',
+              value: dayNet,
+              hint: 'دخل ${Fmt.moneyShort(snapshot.day.cashIn)} · '
+                  'خرج ${Fmt.moneyShort(snapshot.day.cashOut)}',
+              color: dayNet >= 0 ? AppTheme.success : AppTheme.danger,
+              icon: Icons.today_rounded,
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 52,
+            color: scheme.outlineVariant,
+            margin: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          Expanded(
+            child: _CashCell(
+              label: 'الكاش في المحل',
+              value: closing,
+              hint: 'المتراكم حتى نهاية اليوم',
+              color: closing >= 0 ? AppTheme.info : AppTheme.danger,
+              icon: Icons.savings_rounded,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Icon(Icons.info_outline_rounded, size: 13, color: scheme.outline),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              'النقد فقط — لا يشمل البطاقة أو التحويل البنكي',
+              style: TextStyle(fontSize: 10.5, color: scheme.outline),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _CashCell extends StatelessWidget {
+  final String label;
+  final double value;
+  final String hint;
+  final Color color;
+  final IconData icon;
+
+  const _CashCell({
+    required this.label,
+    required this.value,
+    required this.hint,
+    required this.color,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final sign = value > 0.009 ? '+' : '';
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ]),
+      const SizedBox(height: 4),
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(
+          '$sign${Fmt.moneyShort(value)}',
+          style: TextStyle(
+            fontSize: 19,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        hint,
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ]);
+  }
 }
