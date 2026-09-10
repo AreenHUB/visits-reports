@@ -312,49 +312,42 @@ class _DebtCard extends ConsumerWidget {
     );
   }
 
-  /// تسجيل دفعة جزئية على الدين
+  /// تسجيل سداد على الدين، مع قيد في الصندوق يوضّح مصدر المال
   Future<void> _recordPayment(BuildContext context, WidgetRef ref) async {
-    final controller =
-        TextEditingController(text: debt.remaining.toStringAsFixed(2));
-
-    final amount = await showDialog<double>(
+    final result = await showDialog<_DebtPaymentInput>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تسجيل سداد'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('المتبقي على ${debt.personName}: ${Fmt.money(debt.remaining)}',
-              style: const TextStyle(fontSize: 13)),
-          const SizedBox(height: 14),
-          TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            textDirection: TextDirection.ltr,
-            textAlign: TextAlign.left,
-            decoration: const InputDecoration(
-              labelText: 'المبلغ المسدَّد',
-              suffixText: Fmt.currencySymbol,
-            ),
-          ),
-        ]),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              ctx,
-              double.tryParse(controller.text.trim().replaceAll(',', '')),
-            ),
-            child: const Text('تسجيل'),
-          ),
-        ],
-      ),
+      builder: (ctx) => _DebtPaymentDialog(debt: debt),
     );
 
-    if (amount == null || amount <= 0 || !context.mounted) return;
+    if (result == null || result.amount <= 0 || !context.mounted) return;
+    final amount = result.amount;
 
-    final updated = debt.copyWith(paid: debt.paid + amount);
+    // نسجّل السداد يدويًا على الدين
+    final updated = debt.copyWith(
+      paid: debt.paid + amount,
+      manualPaid: debt.manualPaid + amount,
+    );
     await Repository.instance.saveDebt(updated);
+
+    // ونسجّل قيدًا في الصندوق ليظهر من أين جاء هذا المال في يومه
+    if (result.recordInCash) {
+      final now = DateTime.now();
+      await Repository.instance.saveCashEntry(CashEntry(
+        id: AppDatabase.newId(),
+        direction: CashDirection.income,
+        categoryKey: CashCategory.debtPayment.key,
+        categoryLabel: CashCategory.debtPayment.label,
+        description: 'تحصيل دين من ${debt.personName}',
+        partyName: debt.personName,
+        amount: amount,
+        method: result.method,
+        date: result.date,
+        notes: debt.reason.isEmpty ? '' : 'عن: ${debt.reason}',
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
     if (!context.mounted) return;
     bumpRefresh(ref);
 
@@ -703,6 +696,175 @@ class _DebtEditorSheetState extends State<DebtEditorSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// ما يُدخله المستخدم عند تسجيل سداد دين
+class _DebtPaymentInput {
+  final double amount;
+  final PayMethod method;
+  final DateTime date;
+
+  /// هل يُسجَّل قيد في الصندوق؟ نطفئه إن كان المال لم يدخل المحل فعليًا
+  final bool recordInCash;
+
+  const _DebtPaymentInput({
+    required this.amount,
+    required this.method,
+    required this.date,
+    required this.recordInCash,
+  });
+}
+
+/// حوار تسجيل سداد دين مع طريقة الدفع وتاريخه
+class _DebtPaymentDialog extends StatefulWidget {
+  final DebtRecord debt;
+  const _DebtPaymentDialog({required this.debt});
+
+  @override
+  State<_DebtPaymentDialog> createState() => _DebtPaymentDialogState();
+}
+
+class _DebtPaymentDialogState extends State<_DebtPaymentDialog> {
+  late final TextEditingController _amount;
+  PayMethod _method = PayMethod.cash;
+  DateTime _date = DateTime.now();
+  bool _recordInCash = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _amount = TextEditingController(
+      text: widget.debt.remaining.toStringAsFixed(2),
+    );
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      title: const Text('تسجيل سداد'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              'المتبقي على ${widget.debt.personName}: '
+              '${Fmt.money(widget.debt.remaining)}',
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          TextField(
+            controller: _amount,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textDirection: TextDirection.ltr,
+            textAlign: TextAlign.left,
+            decoration: const InputDecoration(
+              labelText: 'المبلغ المسدَّد',
+              suffixText: Fmt.currencySymbol,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text('طريقة الدفع',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                )),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: PayMethod.values
+                .map((m) => ChoiceChip(
+                      label: Text(m.label,
+                          style: const TextStyle(fontSize: 12)),
+                      selected: _method == m,
+                      onSelected: (_) => setState(() => _method = m),
+                      visualDensity: VisualDensity.compact,
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 12),
+
+          InkWell(
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _date,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
+                locale: const Locale('ar'),
+              );
+              if (picked != null) setState(() => _date = picked);
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'تاريخ السداد',
+                prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
+                isDense: true,
+              ),
+              child: Text(Fmt.date(_date),
+                  style: const TextStyle(fontSize: 13.5)),
+            ),
+          ),
+
+          const SizedBox(height: 6),
+          CheckboxListTile(
+            value: _recordInCash,
+            onChanged: (v) => setState(() => _recordInCash = v ?? true),
+            title: const Text('تسجيل قيد في الصندوق',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              _recordInCash
+                  ? 'سيظهر كوارد في حركات ذلك اليوم'
+                  : 'لن يظهر في الصندوق ولن يؤثر على الكاش',
+              style: const TextStyle(fontSize: 11.5),
+            ),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            dense: true,
+          ),
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final amount =
+                double.tryParse(_amount.text.trim().replaceAll(',', '')) ?? 0;
+            Navigator.pop(
+              context,
+              _DebtPaymentInput(
+                amount: amount,
+                method: _method,
+                date: _date,
+                recordInCash: _recordInCash,
+              ),
+            );
+          },
+          child: const Text('تسجيل'),
+        ),
+      ],
     );
   }
 }

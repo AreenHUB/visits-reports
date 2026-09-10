@@ -17,6 +17,7 @@ class MoreScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final balance = ref.watch(cashBalanceProvider);
+    final snapshot = ref.watch(daySnapshotProvider);
     final debtsTotal = ref.watch(debtsOutstandingProvider);
 
     return Scaffold(
@@ -26,9 +27,10 @@ class MoreScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 30),
           children: [
-            // رصيد الكاش داخل المحل
+            // رصيد الكاش داخل المحل مع حركة اليوم
             _CashBalanceCard(
               balance: balance.valueOrNull?.balance ?? 0,
+              todayNet: snapshot.valueOrNull?.dayNet ?? 0,
               loading: balance.isLoading,
             ),
 
@@ -90,9 +92,14 @@ class MoreScreen extends ConsumerWidget {
 /// بطاقة رصيد الكاش — النقد الموجود فعليًا في المحل
 class _CashBalanceCard extends StatelessWidget {
   final double balance;
+  final double todayNet;
   final bool loading;
 
-  const _CashBalanceCard({required this.balance, required this.loading});
+  const _CashBalanceCard({
+    required this.balance,
+    required this.todayNet,
+    required this.loading,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +154,28 @@ class _CashBalanceCard extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
+            if (!loading && todayNet.abs() > 0.009) ...[
+              const SizedBox(height: 5),
+              Row(children: [
+                Icon(
+                  todayNet >= 0
+                      ? Icons.trending_up_rounded
+                      : Icons.trending_down_rounded,
+                  size: 14,
+                  color: todayNet >= 0 ? AppTheme.success : AppTheme.danger,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  'حركة اليوم: ${todayNet > 0 ? '+' : ''}'
+                  '${Fmt.moneyShort(todayNet)}',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: todayNet >= 0 ? AppTheme.success : AppTheme.danger,
+                  ),
+                ),
+              ]),
+            ],
           ]),
         ),
       ]),
