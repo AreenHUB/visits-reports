@@ -1434,17 +1434,32 @@ class PdfService {
   }
 
   /// اسم ملف وصفي بالعربية والتاريخ
-  static String fileNameFor(
-    PeriodSummary s, {
-    String prefix = 'تقرير_الزيارات',
-  }) {
-    if (s.from.year == s.to.year &&
+  /// اسم ملف التقرير.
+  ///
+  /// لاتيني بالكامل: مزوّد الملفات في أندرويد (FileProvider) الذي تستخدمه
+  /// المشاركة والطباعة يفشل مع بعض الأحرف العربية في اسم الملف، وهو فشل
+  /// يقع في الطبقة الأصلية فيُسقط التطبيق بلا رسالة. لذلك نبقي الاسم
+  /// بالحروف والأرقام اللاتينية فقط.
+  static String fileNameFor(PeriodSummary s, {String prefix = 'Report'}) {
+    String d(DateTime x) =>
+        '${x.year}-${x.month.toString().padLeft(2, '0')}-'
+        '${x.day.toString().padLeft(2, '0')}';
+
+    final sameDay = s.from.year == s.to.year &&
         s.from.month == s.to.month &&
-        s.from.day == s.to.day) {
-      return '${prefix}_${Fmt.date(s.from).replaceAll('/', '-')}.pdf';
-    }
-    return '${prefix}_${Fmt.date(s.from).replaceAll('/', '-')}'
-        '_إلى_${Fmt.date(s.to).replaceAll('/', '-')}.pdf';
+        s.from.day == s.to.day;
+
+    return sameDay
+        ? '${prefix}_${d(s.from)}.pdf'
+        : '${prefix}_${d(s.from)}_to_${d(s.to)}.pdf';
+  }
+
+  /// ينظّف أي اسم ملف من الأحرف التي قد يرفضها نظام الملفات أو المشاركة
+  static String safeFileName(String name) {
+    final cleaned = name
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+    return cleaned.isEmpty ? 'file' : cleaned;
   }
 
   /// اسم لاتيني بسيط لمهمة الطباعة.

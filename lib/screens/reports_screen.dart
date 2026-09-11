@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:printing/printing.dart';
 
@@ -246,6 +247,7 @@ class _ReportBodyState extends ConsumerState<_ReportBody> {
         );
         if (!mounted) return;
 
+        // الطباعة تمرّ بالطبقة الأصلية أيضًا، فنلتقط أخطاءها هنا
         try {
           await Printing.layoutPdf(
             onLayout: (_) async => bytes,
@@ -254,6 +256,14 @@ class _ReportBodyState extends ConsumerState<_ReportBody> {
             // الملف مُولَّد مسبقًا بمقاس A4، فلا داعي لإعادة تخطيطه
             // لكل مقاس ورق — وهذا ما كان يُسقط المعاينة في التقارير الطويلة.
             dynamicLayout: false,
+          );
+        } on PlatformException catch (e) {
+          debugPrint('فشلت المعاينة: ${e.code} ${e.message}');
+          if (!mounted) return;
+          showSnack(
+            context,
+            'تعذّرت المعاينة على هذا الجهاز — جرّب المشاركة بدلًا منها',
+            error: true,
           );
         } catch (e) {
           // إن تعذّرت المعاينة (لا خدمة طباعة على الجهاز مثلًا) نحفظ الملف

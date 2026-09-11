@@ -201,7 +201,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       fontWeight: FontWeight.w700,
                       color: Theme.of(context).colorScheme.primary,
                     )),
-                Text('الإصدار 1.4.0',
+                Text('الإصدار 1.4.1',
                     style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.outline)),

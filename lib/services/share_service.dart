@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../db/repository.dart';
@@ -23,17 +24,27 @@ class ShareService {
     String? subject,
     Rect? origin,
   }) async {
+    if (!await file.exists()) {
+      throw Exception('الملف غير موجود');
+    }
+
     final path = file.path;
     final mime = _mimeFor(path);
 
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [XFile(path, mimeType: mime)],
-        text: text,
-        subject: subject,
-        sharePositionOrigin: origin,
-      ),
-    );
+    // PlatformException من الطبقة الأصلية تُلتقط هنا وتُعاد كاستثناء Dart
+    // عادي، فلا تصل إلى النظام حيث تُسقط التطبيق.
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(path, mimeType: mime)],
+          text: text,
+          subject: subject,
+          sharePositionOrigin: origin,
+        ),
+      );
+    } on PlatformException catch (e) {
+      throw Exception('تعذّرت المشاركة: ${e.message ?? e.code}');
+    }
   }
 
   static String? _mimeFor(String path) {

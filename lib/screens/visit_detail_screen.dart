@@ -130,7 +130,11 @@ class VisitDetailScreen extends ConsumerWidget {
       );
       final file = await PdfService.instance.saveToFile(
         bytes,
-        'زيارة_${vf.visit.customerName}_${Fmt.date(vf.visit.date).replaceAll('/', '-')}.pdf',
+        // اسم لاتيني: اسم العميل قد يحمل مسافات ورموزًا يرفضها
+        // مزوّد الملفات في أندرويد عند المشاركة
+        'Visit_${vf.visit.date.year}-'
+            '${vf.visit.date.month.toString().padLeft(2, '0')}-'
+            '${vf.visit.date.day.toString().padLeft(2, '0')}.pdf',
       );
 
       if (!context.mounted) return;

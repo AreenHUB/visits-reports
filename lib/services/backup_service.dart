@@ -52,7 +52,10 @@ class BackupService {
     final out = Directory(p.join(dir.path, 'backups'));
     if (!await out.exists()) await out.create(recursive: true);
 
-    final file = File(p.join(out.path, 'نسخة_احتياطية_${Fmt.fileStamp(DateTime.now())}.json'));
+    // اسم لاتيني ليعمل مع المشاركة على كل الأجهزة
+    final file = File(
+      p.join(out.path, 'AlAqsa_Backup_${Fmt.fileStamp(DateTime.now())}.json'),
+    );
     await file.writeAsString(jsonEncode(data), flush: true);
     return file;
   }
@@ -146,7 +149,7 @@ class BackupService {
     final named = File(
       p.join(
         file.parent.path,
-        'نقل_بيانات_الأقصى_${Fmt.fileStamp(DateTime.now())}.json',
+        'AlAqsa_Transfer_${Fmt.fileStamp(DateTime.now())}.json',
       ),
     );
     await file.rename(named.path);

@@ -45,12 +45,19 @@ class ExcelService {
     return file;
   }
 
+  /// اسم لاتيني للسبب نفسه المذكور في PdfService.fileNameFor
   static String _defaultName(PeriodSummary s) {
-    final from = Fmt.date(s.from).replaceAll('/', '-');
-    if (s.from.year == s.to.year && s.from.month == s.to.month && s.from.day == s.to.day) {
-      return 'تقرير_الزيارات_$from.xlsx';
-    }
-    return 'تقرير_الزيارات_${from}_إلى_${Fmt.date(s.to).replaceAll('/', '-')}.xlsx';
+    String d(DateTime x) =>
+        '${x.year}-${x.month.toString().padLeft(2, '0')}-'
+        '${x.day.toString().padLeft(2, '0')}';
+
+    final sameDay = s.from.year == s.to.year &&
+        s.from.month == s.to.month &&
+        s.from.day == s.to.day;
+
+    return sameDay
+        ? 'Report_${d(s.from)}.xlsx'
+        : 'Report_${d(s.from)}_to_${d(s.to)}.xlsx';
   }
 
   // ------------------------------------------------------------- الأوراق
